@@ -74,3 +74,16 @@ export interface Portfolio {
 
 export type SortKey = keyof BacktestStats | keyof ProcessedStrategy | 'id' | 'mitigationScore' | 'treynorRatio';
 export type SortDirection = 'asc' | 'desc';
+
+export interface PortfolioSegmentMetrics {
+  sharpeRatio: number;
+  calmarRatio: number;
+  maxDrawdownPercent: number;
+  returns: number;
+}
+
+export interface WalkForwardResult {
+  status: 'robust' | 'fragile';
+  inSample: PortfolioSegmentMetrics;
+  outOfSample: PortfolioSegmentMetrics;
+}

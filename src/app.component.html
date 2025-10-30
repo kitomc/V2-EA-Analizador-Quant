@@ -4,10 +4,17 @@
     <div class="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8">
       <div class="flex items-center justify-between h-16">
         <div class="flex items-center space-x-3">
-          <svg class="h-8 w-8 text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12.75h16.5m-16.5 3.75h16.5M3.75 6.75h16.5m-16.5 9.75h16.5" />
-          </svg>
-          <h1 class="text-xl font-bold text-gray-100 tracking-wider">Arquitecto de Portafolios Robustos</h1>
+          <svg class="h-8 w-8 text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12.75h16.5m-16.5 3.75h16.5M3.75 6.75h16.5m-16.5 9.75h16.5" /></svg>
+          <div>
+            <h1 class="text-xl font-bold text-gray-100 tracking-wider">Arquitecto de Portafolios Robustos</h1>
+            @if (monkeyTestStatus(); as status) {
+              <p class="text-xs text-gray-400">{{ status }}</p>
+            } @else if (uploadStatus(); as status) {
+              <p class="text-xs" [class.text-green-400]="status.type === 'success'" [class.text-red-400]="status.type === 'error'">
+                {{ status.message }}
+              </p>
+            }
+          </div>
         </div>
       </div>
       <!-- Portfolio Chart Container -->
@@ -39,15 +46,165 @@
             <input id="strategy-upload" type="file" class="hidden" (change)="onFileSelected($event)" accept=".json" multiple>
           </div>
         </div>
-        @if (uploadStatus(); as status) {
-            <p class="mt-3 text-sm px-1" [class.text-green-400]="status.type === 'success'" [class.text-red-400]="status.type === 'error'">
-              {{ status.message }}
-            </p>
-        }
-          @if (monkeyTestStatus(); as status) {
-            <p class="mt-3 text-sm px-1 text-green-400">
-              {{ status }}
-            </p>
+      </div>
+
+      <!-- Portfolio Card -->
+      <div class="bg-gray-800 rounded-lg shadow-lg p-6 border border-gray-700/50">
+        <div class="flex items-center justify-between mb-6">
+           <div class="flex items-center space-x-3">
+             <svg class="h-6 w-6 text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+              </svg>
+              <h2 class="text-lg font-semibold text-gray-100">Arquitecto de Portafolios</h2>
+           </div>
+          <button (click)="reiniciarPortfolio()" class="text-sm text-cyan-400 hover:text-cyan-300 transition-colors">Reiniciar</button>
+        </div>
+        @if (selectedStrategies().length === 0) {
+          <div class="text-center text-gray-500 py-8">
+            <p>Seleccione estrategias de la tabla para construir un portafolio.</p>
+          </div>
+        } @else {
+          <div class="space-y-4">
+             <div class="flex justify-end">
+                <button (click)="exportPortfolio()" 
+                        [disabled]="selectedStrategies().length === 0"
+                        class="px-3 py-1.5 bg-teal-600 text-white text-xs font-semibold rounded-md hover:bg-teal-700 transition-colors disabled:bg-teal-800 disabled:text-gray-400 disabled:cursor-not-allowed flex items-center space-x-2">
+                   <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    <span>Exportar JSON</span>
+                </button>
+            </div>
+             <!-- Walk-Forward Analysis Result -->
+            @if (walkForwardAnalysis(); as wf) {
+              <div class="p-3 rounded-lg border" 
+                   [class.bg-green-900/40]="wf.status === 'robust'" 
+                   [class.border-green-500/50]="wf.status === 'robust'"
+                   [class.bg-red-900/40]="wf.status === 'fragile'"
+                   [class.border-red-500/50]="wf.status === 'fragile'">
+                <div class="flex items-center space-x-3">
+                  @if (wf.status === 'robust') {
+                    <div class="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0">
+                      <svg class="w-6 h-6 text-green-400 animate-pulse" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h4 class="font-semibold text-green-300">Portafolio Robusto</h4>
+                      <p class="text-xs text-gray-400">Las métricas se mantienen en el 20% de validación.</p>
+                    </div>
+                  } @else {
+                    <div class="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
+                      <svg class="w-6 h-6 text-red-400 animate-pulse" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h4 class="font-semibold text-red-300">Portafolio Frágil</h4>
+                      <p class="text-xs text-gray-400">Rendimiento degradado en el 20% de validación.</p>
+                    </div>
+                  }
+                </div>
+              </div>
+            }
+            <ul class="max-h-40 overflow-y-auto space-y-2 pr-2">
+              @for(strat of selectedStrategies(); track strat.id) {
+                <li class="flex items-center justify-between bg-gray-700/50 p-2 rounded-md">
+                  <span class="text-sm text-gray-300">ID: {{ strat.id }}</span>
+                  
+                  @if (strategyImpactValues().has(strat.id) && activePortfolioMetric(); as metric) {
+                    @let baselineValue = portfolio()?.[metric] ?? 0;
+                    @let valueWithout = strategyImpactValues().get(strat.id)!;
+                    @let isPositive = positiveMetrics.includes(metric);
+                    @let improves = (isPositive && valueWithout > baselineValue) || (!isPositive && valueWithout < baselineValue);
+                    
+                    <div class="flex items-center space-x-2 text-xs font-mono">
+                      <span class="text-gray-400" [title]="'Métrica si se elimina esta estrategia'">
+                        (sin esta: {{ valueWithout.toFixed(2) }}{{ metric === 'maxDrawdownPercent' ? '%' : ''}})
+                      </span>
+                      
+                      @if (Math.abs(valueWithout - baselineValue) > 1e-9) {
+                        @if (improves) {
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-green-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" [title]="'Al eliminar, la métrica mejora a ' + valueWithout.toFixed(2)">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
+                          </svg>
+                        } @else {
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-red-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" [title]="'Al eliminar, la métrica empeora a ' + valueWithout.toFixed(2)">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                          </svg>
+                        }
+                      }
+                    </div>
+                  }
+
+                  <button (click)="toggleSelection(strat, $event)" class="text-red-400 hover:text-red-300 ml-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </li>
+              }
+            </ul>
+            <div class="border-t border-gray-700 pt-4">
+              <h3 class="font-semibold mb-2">Métricas del Portafolio (Ponderación Equitativa)</h3>
+              <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                
+                <div class="flex justify-between cursor-pointer hover:bg-gray-700/50 -mx-1 px-1 rounded transition-colors" [class.bg-gray-700/50]="activePortfolioMetric() === 'sharpeRatio'" (click)="setActivePortfolioMetric('sharpeRatio')">
+                  <div class="flex items-center space-x-2">
+                    <span>Sharpe:</span>
+                    <svg (click)="showPopup('sharpeRatio'); $event.stopPropagation()" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 hover:text-cyan-400 cursor-pointer" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </div>
+                  <span class="font-mono" [class.text-cyan-300]="activePortfolioMetric() !== 'sharpeRatio'" [class.text-white]="activePortfolioMetric() === 'sharpeRatio'" [class.font-bold]="activePortfolioMetric() === 'sharpeRatio'">{{ portfolio()?.sharpeRatio.toFixed(2) }}</span>
+                </div>
+
+                <div class="flex justify-between cursor-pointer hover:bg-gray-700/50 -mx-1 px-1 rounded transition-colors" [class.bg-gray-700/50]="activePortfolioMetric() === 'calmarRatio'" (click)="setActivePortfolioMetric('calmarRatio')">
+                  <div class="flex items-center space-x-2">
+                    <span>Calmar:</span>
+                    <svg (click)="showPopup('calmarRatio'); $event.stopPropagation()" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 hover:text-cyan-400 cursor-pointer" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </div>
+                  <span class="font-mono" [class.text-cyan-300]="activePortfolioMetric() !== 'calmarRatio'" [class.text-white]="activePortfolioMetric() === 'calmarRatio'" [class.font-bold]="activePortfolioMetric() === 'calmarRatio'">{{ portfolio()?.calmarRatio.toFixed(2) }}</span>
+                </div>
+
+                <div class="flex justify-between cursor-pointer hover:bg-gray-700/50 -mx-1 px-1 rounded transition-colors" [class.bg-gray-700/50]="activePortfolioMetric() === 'treynorRatio'" (click)="setActivePortfolioMetric('treynorRatio')">
+                  <div class="flex items-center space-x-2">
+                    <span>Treynor:</span>
+                    <svg (click)="showPopup('treynorRatio'); $event.stopPropagation()" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 hover:text-cyan-400 cursor-pointer" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </div>
+                  <span class="font-mono" [class.text-cyan-300]="activePortfolioMetric() !== 'treynorRatio'" [class.text-white]="activePortfolioMetric() === 'treynorRatio'" [class.font-bold]="activePortfolioMetric() === 'treynorRatio'">{{ portfolio()?.treynorRatio.toFixed(2) }}</span>
+                </div>
+                
+                <div class="flex justify-between cursor-pointer hover:bg-gray-700/50 -mx-1 px-1 rounded transition-colors" [class.bg-gray-700/50]="activePortfolioMetric() === 'maxDrawdownPercent'" (click)="setActivePortfolioMetric('maxDrawdownPercent')">
+                   <div class="flex items-center space-x-2">
+                    <span>Max DD:</span>
+                     <svg (click)="showPopup('maxDrawdown'); $event.stopPropagation()" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 hover:text-cyan-400 cursor-pointer" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </div>
+                  <span class="font-mono" [class.text-cyan-300]="activePortfolioMetric() !== 'maxDrawdownPercent'" [class.text-white]="activePortfolioMetric() === 'maxDrawdownPercent'" [class.font-bold]="activePortfolioMetric() === 'maxDrawdownPercent'">{{ portfolio()?.maxDrawdownPercent.toFixed(2) }}%</span>
+                </div>
+                
+                <div class="flex justify-between cursor-pointer hover:bg-gray-700/50 -mx-1 px-1 rounded transition-colors" [class.bg-gray-700/50]="activePortfolioMetric() === 'avgProfitFactor'" (click)="setActivePortfolioMetric('avgProfitFactor')">
+                  <div class="flex items-center space-x-2">
+                    <span>Avg PF:</span>
+                     <svg (click)="showPopup('profitFactor'); $event.stopPropagation()" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 hover:text-cyan-400 cursor-pointer" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </div>
+                  <span class="font-mono" [class.text-cyan-300]="activePortfolioMetric() !== 'avgProfitFactor'" [class.text-white]="activePortfolioMetric() === 'avgProfitFactor'" [class.font-bold]="activePortfolioMetric() === 'avgProfitFactor'">{{ portfolio()?.avgProfitFactor.toFixed(2) }}</span>
+                </div>
+
+                <div class="flex justify-between cursor-pointer hover:bg-gray-700/50 -mx-1 px-1 rounded transition-colors" [class.bg-gray-700/50]="activePortfolioMetric() === 'profitMode'" (click)="setActivePortfolioMetric('profitMode')">
+                  <div class="flex items-center space-x-2">
+                    <span>Moda Benef:</span>
+                     <svg (click)="showPopup('profitMode'); $event.stopPropagation()" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 hover:text-cyan-400 cursor-pointer" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </div>
+                  <span class="font-mono" [class.text-cyan-300]="activePortfolioMetric() !== 'profitMode'" [class.text-white]="activePortfolioMetric() === 'profitMode'" [class.font-bold]="activePortfolioMetric() === 'profitMode'">{{ portfolio()?.profitMode.toFixed(2) }}</span>
+                </div>
+
+                <div class="flex justify-between cursor-pointer hover:bg-gray-700/50 -mx-1 px-1 rounded transition-colors" [class.bg-gray-700/50]="activePortfolioMetric() === 'profitPercentile80'" (click)="setActivePortfolioMetric('profitPercentile80')">
+                  <div class="flex items-center space-x-2">
+                    <span>P80 Benef:</span>
+                     <svg (click)="showPopup('profitPercentile80'); $event.stopPropagation()" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 hover:text-cyan-400 cursor-pointer" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </div>
+                  <span class="font-mono" [class.text-cyan-300]="activePortfolioMetric() !== 'profitPercentile80'" [class.text-white]="activePortfolioMetric() === 'profitPercentile80'" [class.font-bold]="activePortfolioMetric() === 'profitPercentile80'">{{ portfolio()?.profitPercentile80.toFixed(2) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
         }
       </div>
 
@@ -165,122 +322,6 @@
         </div>
       </div>
 
-      <!-- Portfolio Card -->
-      <div class="bg-gray-800 rounded-lg shadow-lg p-6 border border-gray-700/50">
-        <div class="flex items-center justify-between mb-6">
-           <div class="flex items-center space-x-3">
-             <svg class="h-6 w-6 text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-              </svg>
-              <h2 class="text-lg font-semibold text-gray-100">Arquitecto de Portafolios</h2>
-           </div>
-          <button (click)="reiniciarPortfolio()" class="text-sm text-cyan-400 hover:text-cyan-300 transition-colors">Reiniciar</button>
-        </div>
-        @if (selectedStrategies().length === 0) {
-          <div class="text-center text-gray-500 py-8">
-            <p>Seleccione estrategias de la tabla para construir un portafolio.</p>
-          </div>
-        } @else {
-          <div class="space-y-4">
-             <div class="flex justify-end">
-                <button (click)="exportPortfolio()" 
-                        [disabled]="selectedStrategies().length === 0"
-                        class="px-3 py-1.5 bg-teal-600 text-white text-xs font-semibold rounded-md hover:bg-teal-700 transition-colors disabled:bg-teal-800 disabled:text-gray-400 disabled:cursor-not-allowed flex items-center space-x-2">
-                   <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                    <span>Exportar JSON</span>
-                </button>
-            </div>
-            <ul class="max-h-40 overflow-y-auto space-y-2 pr-2">
-              @for(strat of selectedStrategies(); track strat.id) {
-                <li class="flex items-center justify-between bg-gray-700/50 p-2 rounded-md">
-                  <div class="flex items-center space-x-2">
-                    @if (strategyMetricImpact().has(strat.id)) {
-                        @if (strategyMetricImpact().get(strat.id) === 'improves') {
-                          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" title="Mejora la métrica seleccionada">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
-                          </svg>
-                        } @else {
-                          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" title="Empeora la métrica seleccionada">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
-                          </svg>
-                        }
-                    } @else {
-                      <div class="w-4"></div>
-                    }
-                    <span class="text-sm text-gray-300">ID: {{ strat.id }}</span>
-                  </div>
-                  <button (click)="toggleSelection(strat, $event)" class="text-red-400 hover:text-red-300">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                  </button>
-                </li>
-              }
-            </ul>
-            <div class="border-t border-gray-700 pt-4">
-              <h3 class="font-semibold mb-2">Métricas del Portafolio (Ponderación Equitativa)</h3>
-              <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                
-                <div class="flex justify-between cursor-pointer hover:bg-gray-700/50 -mx-1 px-1 rounded transition-colors" [class.bg-gray-700/50]="activePortfolioMetric() === 'sharpeRatio'" (click)="setActivePortfolioMetric('sharpeRatio')">
-                  <div class="flex items-center space-x-2">
-                    <span>Sharpe:</span>
-                    <svg (click)="showPopup('sharpeRatio'); $event.stopPropagation()" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 hover:text-cyan-400 cursor-pointer" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  </div>
-                  <span class="font-mono" [class.text-cyan-300]="activePortfolioMetric() !== 'sharpeRatio'" [class.text-white]="activePortfolioMetric() === 'sharpeRatio'" [class.font-bold]="activePortfolioMetric() === 'sharpeRatio'">{{ portfolio()?.sharpeRatio.toFixed(2) }}</span>
-                </div>
-
-                <div class="flex justify-between cursor-pointer hover:bg-gray-700/50 -mx-1 px-1 rounded transition-colors" [class.bg-gray-700/50]="activePortfolioMetric() === 'calmarRatio'" (click)="setActivePortfolioMetric('calmarRatio')">
-                  <div class="flex items-center space-x-2">
-                    <span>Calmar:</span>
-                    <svg (click)="showPopup('calmarRatio'); $event.stopPropagation()" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 hover:text-cyan-400 cursor-pointer" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  </div>
-                  <span class="font-mono" [class.text-cyan-300]="activePortfolioMetric() !== 'calmarRatio'" [class.text-white]="activePortfolioMetric() === 'calmarRatio'" [class.font-bold]="activePortfolioMetric() === 'calmarRatio'">{{ portfolio()?.calmarRatio.toFixed(2) }}</span>
-                </div>
-
-                <div class="flex justify-between cursor-pointer hover:bg-gray-700/50 -mx-1 px-1 rounded transition-colors" [class.bg-gray-700/50]="activePortfolioMetric() === 'treynorRatio'" (click)="setActivePortfolioMetric('treynorRatio')">
-                  <div class="flex items-center space-x-2">
-                    <span>Treynor:</span>
-                    <svg (click)="showPopup('treynorRatio'); $event.stopPropagation()" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 hover:text-cyan-400 cursor-pointer" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  </div>
-                  <span class="font-mono" [class.text-cyan-300]="activePortfolioMetric() !== 'treynorRatio'" [class.text-white]="activePortfolioMetric() === 'treynorRatio'" [class.font-bold]="activePortfolioMetric() === 'treynorRatio'">{{ portfolio()?.treynorRatio.toFixed(2) }}</span>
-                </div>
-                
-                <div class="flex justify-between cursor-pointer hover:bg-gray-700/50 -mx-1 px-1 rounded transition-colors" [class.bg-gray-700/50]="activePortfolioMetric() === 'maxDrawdownPercent'" (click)="setActivePortfolioMetric('maxDrawdownPercent')">
-                   <div class="flex items-center space-x-2">
-                    <span>Max DD:</span>
-                     <svg (click)="showPopup('maxDrawdown'); $event.stopPropagation()" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 hover:text-cyan-400 cursor-pointer" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  </div>
-                  <span class="font-mono" [class.text-cyan-300]="activePortfolioMetric() !== 'maxDrawdownPercent'" [class.text-white]="activePortfolioMetric() === 'maxDrawdownPercent'" [class.font-bold]="activePortfolioMetric() === 'maxDrawdownPercent'">{{ portfolio()?.maxDrawdownPercent.toFixed(2) }}%</span>
-                </div>
-                
-                <div class="flex justify-between cursor-pointer hover:bg-gray-700/50 -mx-1 px-1 rounded transition-colors" [class.bg-gray-700/50]="activePortfolioMetric() === 'avgProfitFactor'" (click)="setActivePortfolioMetric('avgProfitFactor')">
-                  <div class="flex items-center space-x-2">
-                    <span>Avg PF:</span>
-                     <svg (click)="showPopup('profitFactor'); $event.stopPropagation()" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 hover:text-cyan-400 cursor-pointer" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  </div>
-                  <span class="font-mono" [class.text-cyan-300]="activePortfolioMetric() !== 'avgProfitFactor'" [class.text-white]="activePortfolioMetric() === 'avgProfitFactor'" [class.font-bold]="activePortfolioMetric() === 'avgProfitFactor'">{{ portfolio()?.avgProfitFactor.toFixed(2) }}</span>
-                </div>
-
-                <div class="flex justify-between cursor-pointer hover:bg-gray-700/50 -mx-1 px-1 rounded transition-colors" [class.bg-gray-700/50]="activePortfolioMetric() === 'profitMode'" (click)="setActivePortfolioMetric('profitMode')">
-                  <div class="flex items-center space-x-2">
-                    <span>Moda Benef:</span>
-                     <svg (click)="showPopup('profitMode'); $event.stopPropagation()" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 hover:text-cyan-400 cursor-pointer" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  </div>
-                  <span class="font-mono" [class.text-cyan-300]="activePortfolioMetric() !== 'profitMode'" [class.text-white]="activePortfolioMetric() === 'profitMode'" [class.font-bold]="activePortfolioMetric() === 'profitMode'">{{ portfolio()?.profitMode.toFixed(2) }}</span>
-                </div>
-
-                <div class="flex justify-between cursor-pointer hover:bg-gray-700/50 -mx-1 px-1 rounded transition-colors" [class.bg-gray-700/50]="activePortfolioMetric() === 'profitPercentile80'" (click)="setActivePortfolioMetric('profitPercentile80')">
-                  <div class="flex items-center space-x-2">
-                    <span>P80 Benef:</span>
-                     <svg (click)="showPopup('profitPercentile80'); $event.stopPropagation()" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 hover:text-cyan-400 cursor-pointer" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  </div>
-                  <span class="font-mono" [class.text-cyan-300]="activePortfolioMetric() !== 'profitPercentile80'" [class.text-white]="activePortfolioMetric() === 'profitPercentile80'" [class.font-bold]="activePortfolioMetric() === 'profitPercentile80'">{{ portfolio()?.profitPercentile80.toFixed(2) }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        }
-      </div>
     </aside>
 
     <!-- Main Content: Table -->

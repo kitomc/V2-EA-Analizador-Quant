@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, signal, computed, ElementRef, viewChild, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
-import { RawStrategy, ProcessedStrategy, Filters, Portfolio, SortKey, SortDirection, BacktestStats } from './strategy.types';
+import { RawStrategy, ProcessedStrategy, Filters, Portfolio, SortKey, SortDirection, BacktestStats, WalkForwardResult, PortfolioSegmentMetrics } from './strategy.types';
 
 declare var d3: any;
 
@@ -42,9 +42,11 @@ export class AppComponent {
     // 1. Get all returns
     const allReturns = strats.map(s => {
       const returns: number[] = [];
-      for (let i = 1; i < s.equity.length; i++) {
-        const prevEquity = s.equity[i-1] > 0 ? s.equity[i-1] : 1;
-        returns.push((s.equity[i] / prevEquity) - 1);
+      if (s.equity) {
+        for (let i = 1; i < s.equity.length; i++) {
+          const prevEquity = s.equity[i-1] > 0 ? s.equity[i-1] : 1;
+          returns.push((s.equity[i] / prevEquity) - 1);
+        }
       }
       return returns;
     });
@@ -210,44 +212,63 @@ export class AppComponent {
   activePortfolioMetric = signal<AnalyzablePortfolioMetric | null>(null);
   popupContent = signal<{ title: string; description: string } | null>(null);
 
-  strategyMetricImpact = computed(() => {
+  readonly positiveMetrics: AnalyzablePortfolioMetric[] = [
+    'sharpeRatio', 'calmarRatio', 'treynorRatio', 'avgProfitFactor', 'profitMode', 'profitPercentile80'
+  ];
+
+  strategyImpactValues = computed(() => {
     const metric = this.activePortfolioMetric();
     const currentPortfolio = this.portfolio();
     const strategies = this.selectedStrategies();
-    const impactMap = new Map<number, 'improves' | 'worsens'>();
+    const impactMap = new Map<number, number>();
 
     if (!metric || !currentPortfolio || strategies.length < 2) {
-        return impactMap;
+      return impactMap;
     }
 
-    const baselineValue = currentPortfolio[metric as keyof Portfolio] as number;
-    
-    // FIX: Changed `this['AnalyzablePortfolioMetric']` to `AnalyzablePortfolioMetric` to correctly reference the type alias and fix the assignment error.
-    const positiveMetrics: AnalyzablePortfolioMetric[] = ['sharpeRatio', 'calmarRatio', 'treynorRatio', 'avgProfitFactor', 'profitMode', 'profitPercentile80'];
-    const isPositive = positiveMetrics.includes(metric);
-
     strategies.forEach(strat => {
-        const portfolioWithoutStrat = this.calculatePortfolio(strategies.filter(s => s.id !== strat.id));
-        if (!portfolioWithoutStrat) return;
-
-        const valueWithoutStrat = portfolioWithoutStrat[metric as keyof Portfolio] as number;
-
-        if (isPositive) {
-            if (baselineValue > valueWithoutStrat) {
-                impactMap.set(strat.id, 'improves');
-            } else if (baselineValue < valueWithoutStrat) {
-                impactMap.set(strat.id, 'worsens');
-            }
-        } else { // Negative metric (maxDrawdownPercent)
-            if (baselineValue < valueWithoutStrat) {
-                impactMap.set(strat.id, 'improves');
-            } else if (baselineValue > valueWithoutStrat) {
-                impactMap.set(strat.id, 'worsens');
-            }
-        }
+      const portfolioWithoutStrat = this.calculatePortfolio(strategies.filter(s => s.id !== strat.id));
+      // If the portfolio is null (e.g., no strategies with equity data left), the metric value is effectively 0.
+      const valueWithoutStrat = (portfolioWithoutStrat?.[metric as keyof Portfolio] as number) ?? 0;
+      impactMap.set(strat.id, valueWithoutStrat);
     });
 
     return impactMap;
+  });
+
+  walkForwardAnalysis = computed<WalkForwardResult | null>(() => {
+    const p = this.portfolio();
+    if (!p || p.equityCurve.length < 20) {
+      return null;
+    }
+
+    const curve = p.equityCurve;
+    const splitIndex = Math.floor(curve.length * 0.8);
+
+    const inSampleCurve = curve.slice(0, splitIndex + 1);
+    const outOfSampleCurve = curve.slice(splitIndex);
+
+    if (inSampleCurve.length < 2 || outOfSampleCurve.length < 2) {
+        return null;
+    }
+
+    const inSample = this.calculateSegmentMetrics(inSampleCurve);
+    const outOfSample = this.calculateSegmentMetrics(outOfSampleCurve);
+    
+    // Degradation thresholds
+    const sharpeDegradation = (inSample.sharpeRatio - outOfSample.sharpeRatio) / Math.max(0.1, Math.abs(inSample.sharpeRatio));
+    const calmarDegradation = (inSample.calmarRatio - outOfSample.calmarRatio) / Math.max(0.1, Math.abs(inSample.calmarRatio));
+    const ddIncrease = (outOfSample.maxDrawdownPercent - inSample.maxDrawdownPercent) / Math.max(1, inSample.maxDrawdownPercent);
+
+    let fragileScore = 0;
+    if (sharpeDegradation > 0.5) fragileScore++; // Sharpe drops by more than 50%
+    if (calmarDegradation > 0.5) fragileScore++; // Calmar drops by more than 50%
+    if (ddIncrease > 0.5) fragileScore++; // Drawdown increases by more than 50%
+    if (outOfSample.returns < 0 && inSample.returns > 0) fragileScore += 2; // OOS is negative while IS is positive is a big red flag.
+    
+    const status = fragileScore >= 2 ? 'fragile' : 'robust';
+
+    return { status, inSample, outOfSample };
   });
 
   private metricDefinitions: { [key: string]: { title: string; description: string } } = {
@@ -679,66 +700,123 @@ export class AppComponent {
 
   // --- Portfolio Calculation ---
 
-  private calculatePortfolio(strategies: ProcessedStrategy[]): Portfolio | null {
-    if (strategies.length === 0) return null;
-
-    const maxLength = Math.max(...strategies.map(s => s.equity.length));
-    const portfolioEquityCurve: number[] = new Array(maxLength).fill(0);
-    const initialAccount = strategies[0]?.initialAccount || 10000;
-    
-    // Equal Weighting
-    const weight = 1 / strategies.length;
-
-    for(let i = 0; i < maxLength; i++) {
-        let periodValue = 0;
-        for (const strat of strategies) {
-            // Use last value if curve is shorter
-            const value = strat.equity[i] ?? strat.equity[strat.equity.length - 1];
-            periodValue += (value / initialAccount) * weight;
-        }
-        portfolioEquityCurve[i] = periodValue * initialAccount;
+  private calculateSegmentMetrics(equitySlice: number[]): PortfolioSegmentMetrics {
+    if (equitySlice.length < 2) {
+        return { sharpeRatio: 0, calmarRatio: 0, maxDrawdownPercent: 0, returns: 0 };
     }
+
+    const initialAccount = equitySlice[0];
     
-    let maxEquity = initialAccount;
+    let maxEquity = initialAccount > 0 ? initialAccount : 1;
     let maxDd = 0;
-    for (const equity of portfolioEquityCurve) {
+    for (const equity of equitySlice) {
         maxEquity = Math.max(maxEquity, equity);
         const drawdown = (maxEquity - equity) / maxEquity;
         maxDd = Math.max(maxDd, drawdown);
     }
     const maxDrawdownPercent = maxDd * 100;
+
+    const finalProfit = equitySlice[equitySlice.length - 1] - initialAccount;
+    const totalReturnPercent = (finalProfit / Math.max(1, initialAccount)) * 100;
     
-    const finalProfit = (portfolioEquityCurve[portfolioEquityCurve.length - 1] - initialAccount);
-    const calmarRatio = maxDrawdownPercent > 0 ? (finalProfit / initialAccount) / (maxDrawdownPercent / 100) : 0;
+    const calmarRatio = maxDrawdownPercent > 0 ? (finalProfit / initialAccount) / (maxDrawdownPercent / 100) : (finalProfit > 0 ? 999 : 0);
+
+    const returns: number[] = [];
+    for (let i = 1; i < equitySlice.length; i++) {
+        const prev = equitySlice[i-1];
+        if (prev > 0) {
+            returns.push((equitySlice[i] / prev) - 1);
+        }
+    }
+    const avgReturn = returns.reduce((acc, val) => acc + val, 0) / (returns.length || 1);
+    const stdDev = Math.sqrt(returns.reduce((acc, val) => acc + Math.pow(val - avgReturn, 2), 0) / (returns.length || 1));
+    const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252) : 0; // Annualized
+
+    return {
+        sharpeRatio,
+        calmarRatio,
+        maxDrawdownPercent,
+        returns: totalReturnPercent
+    };
+  }
+
+  private calculatePortfolio(strategies: ProcessedStrategy[]): Portfolio | null {
+    // Filter for strategies that have valid equity data to ensure calculation stability.
+    const strategiesWithEquity = strategies.filter(s => s.equity?.length > 1);
+    if (strategiesWithEquity.length === 0) return null;
+
+    const maxLength = Math.max(...strategiesWithEquity.map(s => s.equity.length));
+    const portfolioEquityCurve: number[] = new Array(maxLength).fill(0);
+    
+    // Use the initial account of the first valid strategy as the portfolio's base, ensure it's not zero.
+    const portfolioInitialAccount = strategiesWithEquity[0].initialAccount > 0 ? strategiesWithEquity[0].initialAccount : 10000;
+    const weight = 1 / strategiesWithEquity.length;
+
+    for (let i = 0; i < maxLength; i++) {
+        let periodValue = 0;
+        for (const strat of strategiesWithEquity) {
+            // Use the strategy's own initial account for normalization, with a fallback.
+            const stratInitialAccount = strat.initialAccount > 0 ? strat.initialAccount : portfolioInitialAccount;
+            const equityCurve = strat.equity;
+            // Use the last available value if the current strategy's curve is shorter.
+            const value = equityCurve[i] ?? equityCurve[equityCurve.length - 1];
+            periodValue += (value / stratInitialAccount) * weight;
+        }
+        portfolioEquityCurve[i] = periodValue * portfolioInitialAccount;
+    }
+    
+    const initialAccount = portfolioInitialAccount;
+    let maxEquity = initialAccount;
+    let maxDd = 0;
+    for (const equity of portfolioEquityCurve) {
+        maxEquity = Math.max(maxEquity, equity);
+        // Prevent division by zero if maxEquity is 0
+        const drawdown = maxEquity > 0 ? (maxEquity - equity) / maxEquity : 0;
+        maxDd = Math.max(maxDd, drawdown);
+    }
+    const maxDrawdownPercent = maxDd * 100;
+    
+    const finalProfit = portfolioEquityCurve[portfolioEquityCurve.length - 1] - initialAccount;
+    // Handle the case of zero drawdown: if profit is positive, Calmar is effectively infinite (represented as 999).
+    const calmarRatio = maxDrawdownPercent > 0 
+        ? (finalProfit / initialAccount) / (maxDrawdownPercent / 100) 
+        : (finalProfit > 0 ? 999 : 0);
 
     const portfolioTradeProfits = portfolioEquityCurve.slice(1).map((val, i) => val - portfolioEquityCurve[i]).filter(diff => diff !== 0);
     const profitMode = this.calculateMode(portfolioTradeProfits);
     const profitPercentile80 = this.calculatePercentile(portfolioTradeProfits, 80);
 
-    const portfolioBeta = strategies.reduce((sum, s) => sum + (s.beta ?? 1), 0) / strategies.length;
+    const portfolioBeta = strategiesWithEquity.reduce((sum, s) => sum + (s.beta ?? 1), 0) / strategiesWithEquity.length;
+    
     const portfolioReturns: number[] = [];
     for (let i = 1; i < portfolioEquityCurve.length; i++) {
-      const prev = portfolioEquityCurve[i-1];
-      if (prev > 0) {
-        portfolioReturns.push((portfolioEquityCurve[i] / prev) - 1);
-      }
+        const prev = portfolioEquityCurve[i-1];
+        if (prev > 0) {
+            portfolioReturns.push((portfolioEquityCurve[i] / prev) - 1);
+        }
     }
     const avgPortfolioReturn = portfolioReturns.reduce((acc, val) => acc + val, 0) / (portfolioReturns.length || 1);
     const annualizedPortfolioReturn = avgPortfolioReturn * 252;
     const treynorRatio = portfolioBeta !== 0 ? annualizedPortfolioReturn / portfolioBeta : 0;
 
+    const portfolioStdDev = Math.sqrt(portfolioReturns.reduce((acc, val) => acc + Math.pow(val - avgPortfolioReturn, 2), 0) / (portfolioReturns.length || 1));
+    const sharpeRatio = portfolioStdDev > 0 ? (avgPortfolioReturn / portfolioStdDev) * Math.sqrt(252) : 0;
+    
+    // Ensure no NaN values are returned, which could break the UI.
+    const clean = (val: number) => isNaN(val) ? 0 : val;
+
     return {
-      strategies: strategies,
+      strategies: strategies, // Return original selection for display purposes
       equityCurve: portfolioEquityCurve,
-      sharpeRatio: strategies.reduce((sum, s) => sum + s.backtestStats.sharpeRatio, 0) / strategies.length,
-      calmarRatio: calmarRatio,
-      treynorRatio: treynorRatio,
-      maxDrawdownPercent: maxDrawdownPercent,
-      avgProfitFactor: strategies.reduce((sum, s) => sum + s.backtestStats.profitFactor, 0) / strategies.length,
-      avgWinRate: strategies.reduce((sum, s) => sum + s.winRate, 0) / strategies.length,
-      totalTrades: strategies.reduce((sum, s) => sum + s.backtestStats.countOfTrades, 0),
-      profitMode: profitMode,
-      profitPercentile80: profitPercentile80,
+      sharpeRatio: clean(sharpeRatio),
+      calmarRatio: clean(calmarRatio),
+      treynorRatio: clean(treynorRatio),
+      maxDrawdownPercent: clean(maxDrawdownPercent),
+      avgProfitFactor: clean(strategiesWithEquity.reduce((sum, s) => sum + s.backtestStats.profitFactor, 0) / strategiesWithEquity.length),
+      avgWinRate: clean(strategiesWithEquity.reduce((sum, s) => sum + s.winRate, 0) / strategiesWithEquity.length),
+      totalTrades: strategiesWithEquity.reduce((sum, s) => sum + s.backtestStats.countOfTrades, 0),
+      profitMode: clean(profitMode),
+      profitPercentile80: clean(profitPercentile80),
     };
   }
   
