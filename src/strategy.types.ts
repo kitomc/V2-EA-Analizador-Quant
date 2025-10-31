@@ -39,6 +39,8 @@ export interface ProcessedStrategy extends RawStrategy {
   avgTradeDuration: number;
   treynorRatio?: number;
   beta?: number;
+  zScore: number;
+  iqr: number;
   // Synthetic scores for robustness
   monkeyScore: number;
   consistencyScore: number;
@@ -46,16 +48,13 @@ export interface ProcessedStrategy extends RawStrategy {
 }
 
 export interface Filters {
-  minProfitFactor: number;
-  minCalmarRatio: number;
-  maxDrawdown: number;
-  minTrades: number;
-  minRobustnessScore: number;
   minWinRate: number;
+  minExpectancy: number;
   minProfitMode: number;
   minProfitPercentile80: number;
   maxAvgTradeDuration: number;
-  minExpectancy: number;
+  minZScore: number;
+  maxIqr: number;
 }
 
 export interface Portfolio {
@@ -70,9 +69,10 @@ export interface Portfolio {
   totalTrades: number;
   profitMode: number;
   profitPercentile80: number;
+  recoveryFactor: number;
 }
 
-export type SortKey = keyof BacktestStats | keyof ProcessedStrategy | 'id' | 'mitigationScore' | 'treynorRatio';
+export type SortKey = keyof BacktestStats | keyof ProcessedStrategy | 'id' | 'mitigationScore' | 'treynorRatio' | 'zScore' | 'iqr';
 export type SortDirection = 'asc' | 'desc';
 
 export interface PortfolioSegmentMetrics {
