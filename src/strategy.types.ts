@@ -70,6 +70,7 @@ export interface Portfolio {
   profitMode: number;
   profitPercentile80: number;
   recoveryFactor: number;
+  maxConsecutiveLosses: number;
 }
 
 export type SortKey = keyof BacktestStats | keyof ProcessedStrategy | 'id' | 'mitigationScore' | 'treynorRatio' | 'zScore' | 'iqr';

@@ -16,7 +16,8 @@ type AnalyzablePortfolioMetric =
   | 'avgProfitFactor'
   | 'profitMode'
   | 'profitPercentile80'
-  | 'recoveryFactor';
+  | 'recoveryFactor'
+  | 'maxConsecutiveLosses';
 
 interface MonteCarloMetrics {
   sharpeRatio: number;
@@ -26,6 +27,7 @@ interface MonteCarloMetrics {
   recoveryFactor: number;
   profitMode: number;
   profitPercentile80: number;
+  maxConsecutiveLosses: number;
 }
 
 interface MonteCarloResult {
@@ -362,6 +364,7 @@ export class AppComponent {
     const profitPercentile80 = this.percentile(allProfitTrades, 80);
 
     const recoveryFactor = maxDrawdownStats.maxDrawdownValue > 0 ? totalProfit / maxDrawdownStats.maxDrawdownValue : 0;
+    const maxConsecutiveLosses = this.calculateMaxConsecutiveLosses(equityCurve);
     
     const avgBeta = this.mean(strategies.map(s => s.beta ?? 1));
     const treynorRatio = avgBeta !== 0 ? annualizedReturn / avgBeta : 0;
@@ -379,6 +382,7 @@ export class AppComponent {
       profitMode,
       profitPercentile80,
       recoveryFactor,
+      maxConsecutiveLosses,
     };
   }
 
@@ -415,17 +419,17 @@ export class AppComponent {
         };
       });
 
-      const portfolioEquity = this.calculatePortfolio(simStrategies as any).equityCurve;
-      const metrics = this.calculatePortfolioMetrics(portfolioEquity, simStrategies as any);
+      const simPortfolio = this.calculatePortfolio(simStrategies as any);
 
       results.push({
-        sharpeRatio: metrics.sharpeRatio,
-        calmarRatio: metrics.calmarRatio,
-        treynorRatio: metrics.treynorRatio,
-        maxDrawdownPercent: metrics.maxDrawdownPercent,
-        recoveryFactor: metrics.recoveryFactor,
-        profitMode: metrics.profitMode,
-        profitPercentile80: metrics.profitPercentile80,
+        sharpeRatio: simPortfolio.sharpeRatio,
+        calmarRatio: simPortfolio.calmarRatio,
+        treynorRatio: simPortfolio.treynorRatio,
+        maxDrawdownPercent: simPortfolio.maxDrawdownPercent,
+        recoveryFactor: simPortfolio.recoveryFactor,
+        profitMode: simPortfolio.profitMode,
+        profitPercentile80: simPortfolio.profitPercentile80,
+        maxConsecutiveLosses: simPortfolio.maxConsecutiveLosses,
       });
     }
 
@@ -439,6 +443,7 @@ export class AppComponent {
         recoveryFactor: this.percentile(sorted('recoveryFactor'), p),
         profitMode: this.percentile(sorted('profitMode'), p),
         profitPercentile80: this.percentile(sorted('profitPercentile80'), p),
+        maxConsecutiveLosses: this.percentile(sorted('maxConsecutiveLosses'), p),
       };
     };
 
@@ -562,6 +567,7 @@ export class AppComponent {
       avgTradeDuration: { title: 'Duración Promedio del Trade', description: 'El número promedio de barras/períodos que una operación permanece abierta.' },
       zScore: { title: 'Z-Score', description: 'Mide cuántas desviaciones estándar por encima o por debajo de la media está el beneficio de una operación ganadora promedio. Un Z-Score más alto indica que las operaciones ganadoras son significativamente más grandes que la operación promedio, lo que sugiere una ventaja robusta.' },
       iqr: { title: 'Rango Intercuartílico (IQR)', description: 'Es la diferencia entre el percentil 75 y el percentil 25 de los resultados de las operaciones. Un IQR más bajo indica una mayor consistencia en los resultados de las operaciones, con menos dispersión entre las ganancias y pérdidas.' },
+      maxConsecutiveLosses: { title: 'Máx Pérdidas Consecutivas', description: 'El número máximo de períodos de trading (días, barras, etc.) consecutivos en los que el capital del portafolio disminuyó. Mide la duración de las rachas de pérdidas.' },
     };
     return definitions[metric] || { title: 'Métrica no encontrada', description: '' };
   }
@@ -766,6 +772,26 @@ export class AppComponent {
         }
     }
     return { maxDrawdownPercent: maxDrawdown * 100, maxDrawdownValue };
+  }
+
+  private calculateMaxConsecutiveLosses(equity: number[]): number {
+    if (equity.length < 2) return 0;
+    let maxLosingStreak = 0;
+    let currentLosingStreak = 0;
+    for (let i = 1; i < equity.length; i++) {
+      if (equity[i] < equity[i - 1]) {
+        currentLosingStreak++;
+      } else {
+        if (currentLosingStreak > maxLosingStreak) {
+          maxLosingStreak = currentLosingStreak;
+        }
+        currentLosingStreak = 0;
+      }
+    }
+    if (currentLosingStreak > maxLosingStreak) {
+      maxLosingStreak = currentLosingStreak;
+    }
+    return maxLosingStreak;
   }
 
   private percentile(arr: number[], p: number): number {
