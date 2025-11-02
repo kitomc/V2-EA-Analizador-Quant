@@ -8,7 +8,7 @@ export interface RawStrategy {
   backtestStats: BacktestStats;
   equity: number[];
   balance: number[];
-  originKey?: string;
+  originFile?: string;
 }
 
 export interface BacktestStats {
@@ -55,6 +55,7 @@ export interface Filters {
   maxAvgTradeDuration: number;
   minZScore: number;
   maxIqr: number;
+  minRSquared: number;
 }
 
 export interface Portfolio {
@@ -71,6 +72,7 @@ export interface Portfolio {
   profitPercentile80: number;
   recoveryFactor: number;
   maxConsecutiveLosses: number;
+  rSquared: number;
 }
 
 export type SortKey = keyof BacktestStats | keyof ProcessedStrategy | 'id' | 'mitigationScore' | 'treynorRatio' | 'zScore' | 'iqr';

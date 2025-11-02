@@ -28,6 +28,7 @@ interface MonteCarloMetrics {
   profitMode: number;
   profitPercentile80: number;
   maxConsecutiveLosses: number;
+  rSquared: number;
 }
 
 interface MonteCarloResult {
@@ -46,7 +47,11 @@ interface MonteCarloResult {
 })
 export class AppComponent {
 
+  // Chart Elements
   portfolioChart = viewChild<ElementRef>('portfolioChart');
+  strategyEquityChart = viewChild<ElementRef>('strategyEquityChart');
+  strategyDrawdownChart = viewChild<ElementRef>('strategyDrawdownChart');
+  correlationHeatmap = viewChild<ElementRef>('correlationHeatmap');
 
   // Raw and Processed Data Signals
   rawStrategies = signal<RawStrategy[]>([]);
@@ -110,6 +115,7 @@ export class AppComponent {
     maxAvgTradeDuration: 100,
     minZScore: 0,
     maxIqr: 1000,
+    minRSquared: 0,
   };
   effectiveDefaults: Filters;
   filters = signal<Filters>(this.baseDefaultFilters);
@@ -126,7 +132,8 @@ export class AppComponent {
         s.profitPercentile80 >= f.minProfitPercentile80 &&
         s.avgTradeDuration <= f.maxAvgTradeDuration &&
         s.zScore >= f.minZScore &&
-        s.iqr <= f.maxIqr
+        s.iqr <= f.maxIqr &&
+        s.backtestStats.rSquared >= f.minRSquared
       );
   });
   
@@ -169,6 +176,36 @@ export class AppComponent {
   portfolio = signal<Portfolio | null>(null);
   monteCarloResult = signal<MonteCarloResult | null>(null);
   walkForwardAnalysis = signal<WalkForwardResult | null>(null);
+  correlationMatrix = computed(() => {
+      const strategies = this.selectedStrategies();
+      if (strategies.length < 2) return null;
+
+      const returnsMatrix = strategies.map(s => this.calculateReturns(s.equity));
+      const minLength = Math.min(...returnsMatrix.map(r => r.length));
+      if (minLength === 0) return null;
+
+      const truncatedReturns = returnsMatrix.map(r => r.slice(0, minLength));
+      const means = truncatedReturns.map(r => this.mean(r));
+      const stdevs = truncatedReturns.map((r, i) => this.stdev(r, means[i]));
+
+      const matrix: { x: string, y: string, value: number }[] = [];
+      const labels = strategies.map(s => String(s.id));
+
+      for (let i = 0; i < strategies.length; i++) {
+        for (let j = 0; j < strategies.length; j++) {
+          const corr = this.correlation(
+            truncatedReturns[i],
+            truncatedReturns[j],
+            means[i],
+            means[j],
+            stdevs[i],
+            stdevs[j]
+          );
+          matrix.push({ x: labels[j], y: labels[i], value: isNaN(corr) ? 1 : corr });
+        }
+      }
+      return { matrix, labels };
+    });
   
   // UI State Signals
   activeMetricsTab = signal<'equal' | 'montecarlo'>('equal');
@@ -178,6 +215,8 @@ export class AppComponent {
   uploadStatus = signal<{ message: string; type: 'success' | 'error' } | null>(null);
   isTesting = signal(false);
   popupContent = signal<{ title: string; description: string } | null>(null);
+  exportableFiles = signal<{fileName: string, content: string}[] | null>(null);
+  detailedStrategy = signal<ProcessedStrategy | null>(null);
   
   // Constructor and Effects
   constructor() {
@@ -224,6 +263,21 @@ export class AppComponent {
         this.strategyImpactValues.set(new Map());
       }
     });
+
+    effect(() => {
+      const strategy = this.detailedStrategy();
+      if (strategy && this.strategyEquityChart() && this.strategyDrawdownChart()) {
+          this.drawStrategyEquityChart(strategy);
+          this.drawStrategyDrawdownChart(strategy);
+      }
+    });
+
+    effect(() => {
+        const data = this.correlationMatrix();
+        if (data && this.correlationHeatmap()) {
+            this.drawCorrelationHeatmap(data.matrix, data.labels);
+        }
+    });
   }
 
   // File Handling
@@ -233,22 +287,26 @@ export class AppComponent {
 
     this.uploadStatus.set({ message: `Cargando ${input.files.length} archivos...`, type: 'success' });
     try {
-      const allStrategies: RawStrategy[] = [];
-      for (const file of Array.from(input.files)) {
-        const content = await file.text();
-        const data = JSON.parse(content);
-        const strategies = Array.isArray(data) ? data : [data];
-        strategies.forEach(s => s.originKey = file.name + s.id);
-        allStrategies.push(...strategies);
-      }
+        const strategiesMap = new Map<number, RawStrategy>();
 
-      const uniqueStrategies = Array.from(new Map(allStrategies.map(s => [s.originKey, s])).values());
-      
-      this.rawStrategies.set(uniqueStrategies);
-      this.uploadStatus.set({ message: `Carga exitosa: ${uniqueStrategies.length} estrategias únicas.`, type: 'success' });
+        for (const file of Array.from(input.files)) {
+            const content = await file.text();
+            const data = JSON.parse(content);
+            const strategiesFromFile: RawStrategy[] = Array.isArray(data) ? data : [data];
+            
+            for (const s of strategiesFromFile) {
+                (s as any).originFile = file.name; 
+                strategiesMap.set(s.magicNumber, s);
+            }
+        }
+        
+        const uniqueStrategies = Array.from(strategiesMap.values());
+        
+        this.rawStrategies.set(uniqueStrategies);
+        this.uploadStatus.set({ message: `Carga exitosa: ${uniqueStrategies.length} estrategias únicas cargadas.`, type: 'success' });
     } catch (e) {
-      this.uploadStatus.set({ message: 'Error al procesar el archivo JSON.', type: 'error' });
-      console.error(e);
+        this.uploadStatus.set({ message: 'Error al procesar el archivo JSON.', type: 'error' });
+        console.error(e);
     }
   }
 
@@ -368,6 +426,7 @@ export class AppComponent {
     
     const avgBeta = this.mean(strategies.map(s => s.beta ?? 1));
     const treynorRatio = avgBeta !== 0 ? annualizedReturn / avgBeta : 0;
+    const rSquared = this.calculateRSquared(equityCurve);
 
     return {
       strategies: strategies,
@@ -383,6 +442,7 @@ export class AppComponent {
       profitPercentile80,
       recoveryFactor,
       maxConsecutiveLosses,
+      rSquared,
     };
   }
 
@@ -430,6 +490,7 @@ export class AppComponent {
         profitMode: simPortfolio.profitMode,
         profitPercentile80: simPortfolio.profitPercentile80,
         maxConsecutiveLosses: simPortfolio.maxConsecutiveLosses,
+        rSquared: simPortfolio.rSquared,
       });
     }
 
@@ -444,6 +505,7 @@ export class AppComponent {
         profitMode: this.percentile(sorted('profitMode'), p),
         profitPercentile80: this.percentile(sorted('profitPercentile80'), p),
         maxConsecutiveLosses: this.percentile(sorted('maxConsecutiveLosses'), p),
+        rSquared: this.percentile(sorted('rSquared'), p),
       };
     };
 
@@ -491,14 +553,53 @@ export class AppComponent {
   }
 
   exportPortfolio() {
-    const data = JSON.stringify(this.selectedStrategies(), null, 2);
-    const blob = new Blob([data], { type: 'application/json' });
+    const selectedMagicNumbers = new Set(this.selectedStrategies().map(s => s.magicNumber));
+    const allOriginalStrategies = this.rawStrategies();
+
+    const strategiesByFile = new Map<string, RawStrategy[]>();
+    for (const strat of allOriginalStrategies) {
+        const originFile = (strat as any).originFile;
+        if (!originFile) continue;
+
+        if (!strategiesByFile.has(originFile)) {
+            strategiesByFile.set(originFile, []);
+        }
+        strategiesByFile.get(originFile)!.push(strat);
+    }
+    
+    const filesToExport: {fileName: string, content: string}[] = [];
+
+    for (const [fileName, strategiesInFile] of strategiesByFile.entries()) {
+        const portfolioStrategiesForFile = strategiesInFile
+            .filter(s => selectedMagicNumbers.has(s.magicNumber))
+            .map(s => {
+                const { originFile, ...originalStrategy } = s as any;
+                return originalStrategy;
+            });
+
+        if (portfolioStrategiesForFile.length > 0) {
+            const fileContent = JSON.stringify(portfolioStrategiesForFile, null, 2);
+            filesToExport.push({ fileName, content: fileContent });
+        }
+    }
+
+    if (filesToExport.length > 0) {
+        this.exportableFiles.set(filesToExport);
+    }
+  }
+
+  downloadFile(fileName: string, content: string) {
+    const blob = new Blob([content], { type: 'application/json' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'portfolio.json';
+    a.download = fileName;
     a.click();
     window.URL.revokeObjectURL(url);
+  }
+
+  closeExportModal() {
+      this.exportableFiles.set(null);
   }
 
   // Filter and Sort Handlers
@@ -552,6 +653,14 @@ export class AppComponent {
   hidePopup() {
     this.popupContent.set(null);
   }
+
+  showStrategyDetails(strategy: ProcessedStrategy) {
+    this.detailedStrategy.set(strategy);
+  }
+
+  hideStrategyDetails() {
+    this.detailedStrategy.set(null);
+  }
   
   private getPopupContent(metric: string): { title: string; description: string } {
     const definitions: { [key: string]: { title: string; description: string } } = {
@@ -567,6 +676,7 @@ export class AppComponent {
       avgTradeDuration: { title: 'Duración Promedio del Trade', description: 'El número promedio de barras/períodos que una operación permanece abierta.' },
       zScore: { title: 'Z-Score', description: 'Mide cuántas desviaciones estándar por encima o por debajo de la media está el beneficio de una operación ganadora promedio. Un Z-Score más alto indica que las operaciones ganadoras son significativamente más grandes que la operación promedio, lo que sugiere una ventaja robusta.' },
       iqr: { title: 'Rango Intercuartílico (IQR)', description: 'Es la diferencia entre el percentil 75 y el percentil 25 de los resultados de las operaciones. Un IQR más bajo indica una mayor consistencia en los resultados de las operaciones, con menos dispersión entre las ganancias y pérdidas.' },
+      rSquared: { title: 'R-Cuadrado (R-Squared)', description: 'Mide la estabilidad y linealidad de la curva de capital. Un valor más alto (cercano a 100) indica que el crecimiento del capital es más consistente y predecible, similar a una línea recta ascendente.' },
       maxConsecutiveLosses: { title: 'Máx Pérdidas Consecutivas', description: 'El número máximo de períodos de trading (días, barras, etc.) consecutivos en los que el capital del portafolio disminuyó. Mide la duración de las rachas de pérdidas.' },
     };
     return definitions[metric] || { title: 'Métrica no encontrada', description: '' };
@@ -642,7 +752,7 @@ export class AppComponent {
     this.reiniciarPortfolio();
   }
   
-  // D3 Chart
+  // D3 Charts
   private drawPortfolioChart(data: number[]) {
     const chartContainer = this.portfolioChart()?.nativeElement;
     if (!chartContainer || data.length < 2) return;
@@ -698,6 +808,151 @@ export class AppComponent {
       .attr('d', line);
   }
 
+  private drawStrategyEquityChart(strategy: ProcessedStrategy) {
+    const chartContainer = this.strategyEquityChart()?.nativeElement;
+    const data = strategy.equity;
+    if (!chartContainer || !data || data.length < 2) return;
+
+    d3.select(chartContainer).select('svg').remove();
+
+    const margin = { top: 10, right: 10, bottom: 20, left: 50 };
+    const width = chartContainer.clientWidth - margin.left - margin.right;
+    const height = chartContainer.clientHeight - margin.top - margin.bottom;
+
+    const svg = d3.select(chartContainer)
+      .append('svg')
+      .attr('width', width + margin.left + margin.right)
+      .attr('height', height + margin.top + margin.bottom)
+      .append('g')
+      .attr('transform', `translate(${margin.left},${margin.top})`);
+      
+    const x = d3.scaleLinear().range([0, width]);
+    const y = d3.scaleLinear().range([height, 0]);
+
+    x.domain([0, data.length - 1]);
+    y.domain(d3.extent(data));
+
+    svg.append("g")
+        .attr("transform", "translate(0," + height + ")")
+        .call(d3.axisBottom(x).ticks(5))
+        .attr("color", "#9ca3af");
+
+    svg.append("g")
+        .call(d3.axisLeft(y).ticks(5).tickFormat(d3.format("$,.0f")))
+         .attr("color", "#9ca3af");
+
+    const line = d3.line()
+      .x((d:any, i:any) => x(i))
+      .y((d:any) => y(d))
+      .curve(d3.curveMonotoneX);
+
+    svg.append('path')
+      .datum(data)
+      .attr('fill', 'none')
+      .attr('stroke', 'hsl(175, 80%, 45%)')
+      .attr('stroke-width', 2)
+      .attr('d', line);
+  }
+
+  private drawStrategyDrawdownChart(strategy: ProcessedStrategy) {
+    const chartContainer = this.strategyDrawdownChart()?.nativeElement;
+    if (!chartContainer || !strategy.equity || strategy.equity.length < 2) return;
+
+    const data = this.calculateDrawdownSeries(strategy.equity);
+    d3.select(chartContainer).select('svg').remove();
+    
+    const margin = { top: 10, right: 10, bottom: 20, left: 50 };
+    const width = chartContainer.clientWidth - margin.left - margin.right;
+    const height = chartContainer.clientHeight - margin.top - margin.bottom;
+
+    const svg = d3.select(chartContainer)
+      .append('svg')
+      .attr('width', width + margin.left + margin.right)
+      .attr('height', height + margin.top + margin.bottom)
+      .append('g')
+      .attr('transform', `translate(${margin.left},${margin.top})`);
+      
+    const x = d3.scaleLinear().range([0, width]);
+    const y = d3.scaleLinear().range([0, height]); // Inverted for drawdown
+
+    x.domain([0, data.length - 1]);
+    y.domain([0, d3.max(data)]);
+
+    svg.append("g")
+        .attr("transform", "translate(0," + height + ")")
+        .call(d3.axisBottom(x).ticks(5))
+        .attr("color", "#9ca3af");
+
+    svg.append("g")
+        .call(d3.axisLeft(y).ticks(5).tickFormat(d => `${d}%`))
+        .attr("color", "#9ca3af");
+        
+    const area = d3.area()
+      .x((d: any, i: any) => x(i))
+      .y0(0)
+      .y1((d: any) => y(d))
+      .curve(d3.curveMonotoneX);
+
+    svg.append('path')
+      .datum(data)
+      .attr('fill', 'rgba(239, 68, 68, 0.5)')
+      .attr('d', area);
+  }
+
+  private drawCorrelationHeatmap(data: {x: string, y: string, value: number}[], labels: string[]) {
+    const chartContainer = this.correlationHeatmap()?.nativeElement;
+    if (!chartContainer || !data) return;
+
+    d3.select(chartContainer).select("svg").remove();
+
+    const margin = { top: 30, right: 30, bottom: 30, left: 30 };
+    const width = chartContainer.clientWidth - margin.left - margin.right;
+    const height = chartContainer.clientHeight - margin.top - margin.bottom;
+
+    const svg = d3.select(chartContainer)
+        .append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom)
+        .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    const x = d3.scaleBand().range([0, width]).domain(labels).padding(0.05);
+    svg.append("g")
+        .style("font-size", "10px")
+        .attr("transform", `translate(0, ${height})`)
+        .call(d3.axisBottom(x).tickSize(0))
+        .selectAll("text")
+        .attr("transform", "translate(-10,10)rotate(-45)")
+        .style("text-anchor", "end")
+        .attr("fill", "#9ca3af");
+    
+    const y = d3.scaleBand().range([height, 0]).domain(labels).padding(0.05);
+    svg.append("g")
+        .style("font-size", "10px")
+        .call(d3.axisLeft(y).tickSize(0))
+        .select(".domain").remove()
+        .selectAll("text")
+        .attr("fill", "#9ca3af");
+
+    const myColor = d3.scaleSequential().interpolator(d3.interpolateRdBu).domain([1, -1]);
+
+    svg.selectAll()
+        .data(data, (d: any) => d.x + ':' + d.y)
+        .enter()
+        .append("rect")
+        .attr("x", (d: any) => x(d.x))
+        .attr("y", (d: any) => y(d.y))
+        .attr("rx", 4)
+        .attr("ry", 4)
+        .attr("width", x.bandwidth())
+        .attr("height", y.bandwidth())
+        .style("fill", (d: any) => myColor(d.value))
+        .style("stroke-width", 4)
+        .style("stroke", "none")
+        .style("opacity", 0.8);
+  }
+
+
   // Math Utilities
   private calculateReturns(equity: number[]): number[] {
     const returns: number[] = [];
@@ -707,6 +962,21 @@ export class AppComponent {
         returns.push((equity[i] / prev) - 1);
     }
     return returns;
+  }
+
+  private calculateDrawdownSeries(equity: number[]): number[] {
+    if (equity.length < 2) return [];
+    let peak = equity[0];
+    const drawdownSeries: number[] = [0];
+
+    for (let i = 1; i < equity.length; i++) {
+        if (equity[i] > peak) {
+            peak = equity[i];
+        }
+        const drawdown = (peak - equity[i]) / peak;
+        drawdownSeries.push(drawdown * 100);
+    }
+    return drawdownSeries;
   }
 
   private mean(arr: number[]): number {
@@ -822,5 +1092,34 @@ export class AppComponent {
       }
     }
     return mode;
+  }
+
+  private calculateRSquared(data: number[]): number {
+    if (data.length < 2) return 0;
+    const n = data.length;
+    const x = Array.from({ length: n }, (_, i) => i);
+    const y = data;
+
+    const sumX = x.reduce((a, b) => a + b, 0);
+    const sumY = y.reduce((a, b) => a + b, 0);
+    const sumXY = x.map((xi, i) => xi * y[i]).reduce((a, b) => a + b, 0);
+    const sumX2 = x.map(xi => xi * xi).reduce((a, b) => a + b, 0);
+    const meanY = sumY / n;
+
+    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+    const intercept = (sumY - slope * sumX) / n;
+
+    let ssTot = 0;
+    let ssRes = 0;
+
+    for (let i = 0; i < n; i++) {
+        const yHat = slope * x[i] + intercept;
+        ssTot += Math.pow(y[i] - meanY, 2);
+        ssRes += Math.pow(y[i] - yHat, 2);
+    }
+
+    if (ssTot === 0) return 100;
+    
+    return (1 - (ssRes / ssTot)) * 100;
   }
 }
