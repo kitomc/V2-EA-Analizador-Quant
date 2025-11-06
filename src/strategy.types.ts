@@ -56,6 +56,7 @@ export interface Filters {
   minZScore: number;
   maxIqr: number;
   minRSquared: number;
+  minTreynorRatio: number;
 }
 
 export interface Portfolio {

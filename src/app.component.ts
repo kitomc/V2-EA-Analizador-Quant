@@ -110,12 +110,13 @@ export class AppComponent {
   baseDefaultFilters: Filters = {
     minWinRate: 0.0,
     minExpectancy: 0,
-    minProfitMode: 20,
-    minProfitPercentile80: 40,
+    minProfitMode: 2,
+    minProfitPercentile80: 4,
     maxAvgTradeDuration: 100,
     minZScore: 0,
-    maxIqr: 1000,
-    minRSquared: 0,
+    maxIqr: 100,
+    minRSquared: 45,
+    minTreynorRatio: 0,
   };
   effectiveDefaults: Filters;
   filters = signal<Filters>(this.baseDefaultFilters);
@@ -133,7 +134,8 @@ export class AppComponent {
         s.avgTradeDuration <= f.maxAvgTradeDuration &&
         s.zScore >= f.minZScore &&
         s.iqr <= f.maxIqr &&
-        s.backtestStats.rSquared >= f.minRSquared
+        s.backtestStats.rSquared >= f.minRSquared &&
+        (s.treynorRatio ?? -Infinity) >= f.minTreynorRatio
       );
   });
   
