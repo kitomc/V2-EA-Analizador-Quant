@@ -286,6 +286,34 @@
         }
       </div>
 
+      <!-- Portfolio Dispersion Analysis Card -->
+      <div class="bg-gray-800 rounded-lg shadow-lg p-6 border border-gray-700/50">
+        <h3 class="font-semibold text-gray-100 mb-4">Análisis de Dispersión del Portafolio</h3>
+        @if (selectedStrategies().length > 1) {
+            <div class="space-y-8">
+                <!-- DD vs Returns -->
+                <div>
+                    <h4 class="text-sm text-center text-gray-400 mb-2">DD % vs Retorno Anualizado</h4>
+                    <div #ddReturnsScatter class="w-full h-56"></div>
+                </div>
+                <!-- Win Rate vs Expectancy -->
+                <div>
+                    <h4 class="text-sm text-center text-gray-400 mb-2">Win Rate % vs Expectativa</h4>
+                    <div #winRateExpectancyScatter class="w-full h-56"></div>
+                </div>
+                <!-- Robustness vs Mitigation -->
+                <div>
+                    <h4 class="text-sm text-center text-gray-400 mb-2">Robustez vs Mitigación</h4>
+                    <div #robustnessMitigationScatter class="w-full h-56"></div>
+                </div>
+            </div>
+        } @else {
+            <div class="text-center text-gray-500 py-8">
+                <p>Seleccione 2 o más estrategias para ver el análisis de dispersión.</p>
+            </div>
+        }
+      </div>
+
       <!-- Filter Card -->
       <div class="bg-gray-800 rounded-lg shadow-lg p-6 border border-gray-700/50">
         <div class="flex items-center justify-between mb-4">

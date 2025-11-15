@@ -52,6 +52,9 @@ export class AppComponent {
   strategyEquityChart = viewChild<ElementRef>('strategyEquityChart');
   strategyDrawdownChart = viewChild<ElementRef>('strategyDrawdownChart');
   correlationHeatmap = viewChild<ElementRef>('correlationHeatmap');
+  ddReturnsScatter = viewChild<ElementRef>('ddReturnsScatter');
+  winRateExpectancyScatter = viewChild<ElementRef>('winRateExpectancyScatter');
+  robustnessMitigationScatter = viewChild<ElementRef>('robustnessMitigationScatter');
 
   // Raw and Processed Data Signals
   rawStrategies = signal<RawStrategy[]>([]);
@@ -61,46 +64,77 @@ export class AppComponent {
 
   processedStrategies = computed<ProcessedStrategy[]>(() => {
     const strats = this.baseProcessedStrategies();
+    const selected = this.selectedStrategies();
     
-    if (strats.length < 2) {
+    if (strats.length === 0) {
+      return [];
+    }
+    
+    // Use selected portfolio as benchmark if it has > 1 strategy, otherwise use all strategies
+    const marketPortfolio = selected.length > 1 ? selected : strats;
+
+    // Fallback if there's no meaningful market portfolio
+    if (marketPortfolio.length < 2) {
       return strats.map(s => ({ ...s, treynorRatio: 0, beta: 1, mitigationScore: 50 }));
     }
 
-    const allReturns = strats.map(s => this.calculateReturns(s.equity));
-    const minReturnLength = Math.min(...allReturns.map(r => r.length));
+    const marketReturnsLists = marketPortfolio.map(s => this.calculateReturns(s.equity));
+    // FIX: Cast `r` to `number[]` because it is inferred as `unknown`.
+    const minMarketReturnLength = Math.min(...marketReturnsLists.map(r => (r as number[]).length));
 
-    if (minReturnLength === 0) {
+    // Fallback if market portfolio strategies have no returns history
+    if (minMarketReturnLength < 2) {
         return strats.map(s => ({ ...s, treynorRatio: 0, beta: 1, mitigationScore: 50 }));
     }
     
+    // Calculate the market's average returns
     const marketReturns: number[] = [];
-    for (let i = 0; i < minReturnLength; i++) {
+    for (let i = 0; i < minMarketReturnLength; i++) {
       let sum = 0;
-      for (const stratReturns of allReturns) {
-        sum += stratReturns[i];
+      for (const stratReturns of marketReturnsLists) {
+        // This is safe because of the minMarketReturnLength check above
+        sum += (stratReturns as number[])[i];
       }
-      marketReturns.push(sum / allReturns.length);
+      marketReturns.push(sum / marketReturnsLists.length);
     }
     
-    const marketMean = this.mean(marketReturns);
-    const marketVariance = this.variance(marketReturns, marketMean);
+    // Pre-calculate all strategy returns to avoid re-calculation in loop
+    const allStratReturnsMap = new Map(strats.map(s => [s.id, this.calculateReturns(s.equity)]));
 
-    if (marketVariance === 0) {
-      return strats.map(s => ({ ...s, treynorRatio: 0, beta: 1, mitigationScore: 50 }));
-    }
-
-    return strats.map((strat, index) => {
-      const stratReturns = allReturns[index].slice(0, minReturnLength);
-      const stratMean = this.mean(stratReturns);
-
-      const covariance = this.covariance(stratReturns, marketReturns, stratMean, marketMean);
-      const beta = covariance / marketVariance;
+    // Calculate metrics for each strategy against the market portfolio
+    return strats.map((strat) => {
+      const stratReturnsFull = allStratReturnsMap.get(strat.id) || [];
       
+      // Align return series lengths
+      const minLength = Math.min(marketReturns.length, (stratReturnsFull as number[]).length);
+      
+      if (minLength < 2) {
+          return { ...strat, treynorRatio: 0, beta: 1, mitigationScore: 50 };
+      }
+
+      // FIX: Cast `stratReturnsFull` to `number[]` because it is inferred as `unknown`.
+      const stratReturns = (stratReturnsFull as number[]).slice(0, minLength);
+      const marketReturnsSliced = marketReturns.slice(0, minLength);
+      
+      const stratMean = this.mean(stratReturns);
+      const marketMeanSliced = this.mean(marketReturnsSliced);
+      const marketVarianceSliced = this.variance(marketReturnsSliced, marketMeanSliced);
+
+      if (marketVarianceSliced === 0) {
+        return { ...strat, treynorRatio: 0, beta: 1, mitigationScore: 50 };
+      }
+
+      // Calculate Beta and Treynor Ratio
+      const covariance = this.covariance(stratReturns, marketReturnsSliced, stratMean, marketMeanSliced);
+      const beta = covariance / marketVarianceSliced;
       const annualizedReturn = stratMean * 252;
       const treynorRatio = beta !== 0 ? annualizedReturn / beta : 0;
 
-      const correlation = this.correlation(stratReturns, marketReturns, stratMean, marketMean, this.stdev(stratReturns, stratMean), this.stdev(marketReturns, marketMean));
-      const mitigationScore = (1 - correlation) * 50;
+      // Calculate Correlation and Mitigation Score
+      const stratStdev = this.stdev(stratReturns, stratMean);
+      const marketStdev = this.stdev(marketReturnsSliced, marketMeanSliced);
+      const correlation = this.correlation(stratReturns, marketReturnsSliced, stratMean, marketMeanSliced, stratStdev, marketStdev);
+      const mitigationScore = (1 - (isNaN(correlation) ? 1 : correlation)) * 50;
       
       return { ...strat, treynorRatio, beta, mitigationScore };
     });
@@ -278,6 +312,15 @@ export class AppComponent {
         const data = this.correlationMatrix();
         if (data && this.correlationHeatmap()) {
             this.drawCorrelationHeatmap(data.matrix, data.labels);
+        }
+    });
+
+    effect(() => {
+        const strategies = this.selectedStrategies();
+        if (strategies.length > 1) {
+            this.drawDdReturnsScatter(strategies);
+            this.drawWinRateExpectancyScatter(strategies);
+            this.drawRobustnessMitigationScatter(strategies);
         }
     });
   }
@@ -886,7 +929,7 @@ export class AppComponent {
         .attr("color", "#9ca3af");
 
     svg.append("g")
-        .call(d3.axisLeft(y).ticks(5).tickFormat(d => `${d}%`))
+        .call(d3.axisLeft(y).ticks(5).tickFormat((d: any) => `${d}%`))
         .attr("color", "#9ca3af");
         
     const area = d3.area()
@@ -954,6 +997,173 @@ export class AppComponent {
         .style("opacity", 0.8);
   }
 
+  private drawDdReturnsScatter(strategies: ProcessedStrategy[]) {
+    const chartContainer = this.ddReturnsScatter()?.nativeElement;
+    if (!chartContainer || strategies.length < 2) return;
+
+    const data = strategies.map(s => ({
+        id: s.id,
+        x: s.backtestStats.maxDrawdownPercent,
+        y: this.calculateAnnualizedReturn(s.equity) * 100
+    }));
+
+    const xMode = this.mode(data.map(d => d.x));
+
+    this.drawScatterPlot(
+        chartContainer, 
+        data, 
+        'Max Drawdown (%)', 
+        'Retorno Anualizado (%)',
+        xMode
+    );
+  }
+
+  private drawWinRateExpectancyScatter(strategies: ProcessedStrategy[]) {
+    const chartContainer = this.winRateExpectancyScatter()?.nativeElement;
+    if (!chartContainer || strategies.length < 2) return;
+
+    const data = strategies.map(s => ({
+        id: s.id,
+        x: s.winRate * 100,
+        y: s.expectancy
+    }));
+    
+    const xMode = this.mode(data.map(d => d.x));
+
+    this.drawScatterPlot(
+        chartContainer, 
+        data, 
+        'Win Rate (%)', 
+        'Expectativa ($)',
+        xMode
+    );
+  }
+
+  private drawRobustnessMitigationScatter(strategies: ProcessedStrategy[]) {
+    const chartContainer = this.robustnessMitigationScatter()?.nativeElement;
+    if (!chartContainer || strategies.length < 2) return;
+
+    const data = strategies.map(s => ({
+        id: s.id,
+        x: s.robustnessScore,
+        y: s.mitigationScore ?? 50
+    }));
+
+    const xMode = this.mode(data.map(d => d.x));
+
+    this.drawScatterPlot(
+        chartContainer, 
+        data, 
+        'Puntuación de Robustez', 
+        'Puntuación de Mitigación',
+        xMode
+    );
+  }
+
+  private drawScatterPlot(
+    container: HTMLElement, 
+    data: { id: number; x: number; y: number }[], 
+    xLabel: string, 
+    yLabel: string,
+    xMode?: number
+  ) {
+    d3.select(container).select('svg').remove();
+    d3.select('body').select('.scatter-tooltip').remove();
+
+    const tooltip = d3.select('body').append('div')
+        .attr('class', 'scatter-tooltip')
+        .style('position', 'absolute')
+        .style('z-index', '50')
+        .style('visibility', 'hidden')
+        .style('background', 'rgba(17, 24, 39, 0.9)')
+        .style('border', '1px solid #4b5563')
+        .style('color', '#e5e7eb')
+        .style('padding', '6px 10px')
+        .style('border-radius', '6px')
+        .style('font-size', '12px')
+        .style('pointer-events', 'none');
+
+    const margin = { top: 20, right: 20, bottom: 45, left: 55 };
+    const width = container.clientWidth - margin.left - margin.right;
+    const height = container.clientHeight - margin.top - margin.bottom;
+
+    const svg = d3.select(container)
+        .append('svg')
+        .attr('width', width + margin.left + margin.right)
+        .attr('height', height + margin.top + margin.bottom)
+        .append('g')
+        .attr('transform', `translate(${margin.left},${margin.top})`);
+
+    const xExtent = d3.extent(data, (d:any) => d.x);
+    const xPadding = (xExtent[1] - xExtent[0]) * 0.1 || 1;
+    const x = d3.scaleLinear()
+        .domain([xExtent[0] - xPadding, xExtent[1] + xPadding])
+        .range([0, width]);
+
+    svg.append('g')
+        .attr('transform', `translate(0, ${height})`)
+        .call(d3.axisBottom(x).ticks(5))
+        .attr('color', '#6b7280');
+
+    const yExtent = d3.extent(data, (d:any) => d.y);
+    const yPadding = (yExtent[1] - yExtent[0]) * 0.1 || 1;
+    const y = d3.scaleLinear()
+        .domain([yExtent[0] - yPadding, yExtent[1] + yPadding])
+        .range([height, 0]);
+
+    svg.append('g')
+        .call(d3.axisLeft(y).ticks(5))
+        .attr('color', '#6b7280');
+
+    svg.append('text')
+        .attr('text-anchor', 'middle')
+        .attr('x', width / 2)
+        .attr('y', height + margin.bottom - 5)
+        .text(xLabel)
+        .style('fill', '#9ca3af')
+        .style('font-size', '11px');
+
+    svg.append('text')
+        .attr('text-anchor', 'middle')
+        .attr('transform', 'rotate(-90)')
+        .attr('y', -margin.left + 15)
+        .attr('x', -height / 2)
+        .text(yLabel)
+        .style('fill', '#9ca3af')
+        .style('font-size', '11px');
+    
+    if (xMode !== undefined && xMode >= (xExtent[0] - xPadding) && xMode <= (xExtent[1] + xPadding)) {
+        svg.append('line')
+            .attr('x1', x(xMode))
+            .attr('y1', 0)
+            .attr('x2', x(xMode))
+            .attr('y2', height)
+            .style('stroke', 'red')
+            .style('stroke-width', 1.5)
+            .style('stroke-dasharray', '4');
+    }
+
+    svg.append('g')
+        .selectAll('dot')
+        .data(data)
+        .enter()
+        .append('circle')
+        .attr('cx', (d: any) => x(d.x))
+        .attr('cy', (d: any) => y(d.y))
+        .attr('r', 5)
+        .style('fill', '#2dd4bf')
+        .style('opacity', 0.7)
+        .style('stroke', '#1f2937')
+        .on('mouseover', (event: any, d: any) => {
+            tooltip.style('visibility', 'visible').html(`ID: ${d.id}<br/>${xLabel.split(' ')[0]}: ${d.x.toFixed(2)}<br/>${yLabel.split(' ')[0]}: ${d.y.toFixed(2)}`);
+        })
+        .on('mousemove', (event: any) => {
+            tooltip.style('top', (event.pageY - 10) + 'px').style('left', (event.pageX + 10) + 'px');
+        })
+        .on('mouseout', () => {
+            tooltip.style('visibility', 'hidden');
+        });
+  }
 
   // Math Utilities
   private calculateReturns(equity: number[]): number[] {
