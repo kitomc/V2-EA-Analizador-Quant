@@ -796,6 +796,17 @@ export class AppComponent {
     this.rawStrategies.set([]);
     this.reiniciarPortfolio();
   }
+
+  deleteStrategy(id: number) {
+    this.rawStrategies.update(strategies => strategies.filter(s => s.id !== id));
+    this.selectedStrategiesMap.update(map => {
+      const newMap = new Map(map);
+      if (newMap.has(id)) {
+        newMap.delete(id);
+      }
+      return newMap;
+    });
+  }
   
   // D3 Charts
   private drawPortfolioChart(data: number[]) {
