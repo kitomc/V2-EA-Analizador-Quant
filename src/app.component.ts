@@ -250,6 +250,7 @@ export class AppComponent {
   positiveMetrics: AnalyzablePortfolioMetric[] = ['sharpeRatio', 'calmarRatio', 'treynorRatio', 'avgProfitFactor', 'profitMode', 'profitPercentile80', 'recoveryFactor'];
   uploadStatus = signal<{ message: string; type: 'success' | 'error' } | null>(null);
   isTesting = signal(false);
+  isOptimizing = signal(false);
   popupContent = signal<{ title: string; description: string } | null>(null);
   exportableFiles = signal<{fileName: string, content: string}[] | null>(null);
   detailedStrategy = signal<ProcessedStrategy | null>(null);
@@ -790,6 +791,74 @@ export class AppComponent {
     setTimeout(() => {
       this.isTesting.set(false);
     }, 3000);
+  }
+
+  optimizePortfolioByMode(): void {
+    this.isOptimizing.set(true);
+
+    // Use setTimeout to allow UI to update and not freeze the browser
+    setTimeout(() => {
+        try {
+            const candidates = this.filteredStrategies();
+            if (candidates.length < 2) {
+                this.isOptimizing.set(false);
+                return;
+            }
+
+            let bestCombination: ProcessedStrategy[] = [];
+            let maxMode = -Infinity;
+
+            // To speed this up, limit the initial pair search space for larger sets
+            const searchCandidates = candidates.length > 50 ? candidates.slice(0, 50) : candidates;
+
+            for (let i = 0; i < searchCandidates.length; i++) {
+                for (let j = i + 1; j < searchCandidates.length; j++) {
+                    const pair = [searchCandidates[i], searchCandidates[j]];
+                    const tempPortfolio = this.calculatePortfolio(pair);
+                    if (tempPortfolio.profitMode > maxMode) {
+                        maxMode = tempPortfolio.profitMode;
+                        bestCombination = pair;
+                    }
+                }
+            }
+            
+            if (bestCombination.length === 0) {
+                this.isOptimizing.set(false);
+                return;
+            }
+
+            let remainingCandidates = candidates.filter(c => !bestCombination.some(s => s.id === c.id));
+
+            while (remainingCandidates.length > 0) {
+                let bestCandidateToAdd: ProcessedStrategy | null = null;
+                let iterationBestMode = -Infinity;
+
+                for (const candidate of remainingCandidates) {
+                    const testCombination = [...bestCombination, candidate];
+                    const tempPortfolio = this.calculatePortfolio(testCombination);
+                    if (tempPortfolio.profitMode > iterationBestMode) {
+                        iterationBestMode = tempPortfolio.profitMode;
+                        bestCandidateToAdd = candidate;
+                    }
+                }
+
+                if (iterationBestMode > maxMode && bestCandidateToAdd) {
+                    maxMode = iterationBestMode;
+                    bestCombination.push(bestCandidateToAdd);
+                    remainingCandidates = remainingCandidates.filter(c => c.id !== bestCandidateToAdd!.id);
+                } else {
+                    break;
+                }
+            }
+            
+            this.selectedStrategiesMap.set(new Map(bestCombination.map(s => [s.id, s])));
+
+        } catch (e) {
+            console.error("Error during portfolio optimization:", e);
+        } finally {
+            this.isOptimizing.set(false);
+        }
+    }, 50);
   }
 
   clearAllStrategies() {
