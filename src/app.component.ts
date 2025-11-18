@@ -64,14 +64,16 @@ export class AppComponent {
 
   processedStrategies = computed<ProcessedStrategy[]>(() => {
     const strats = this.baseProcessedStrategies();
-    const selected = this.selectedStrategies();
     
     if (strats.length === 0) {
       return [];
     }
     
-    // Use selected portfolio as benchmark if it has > 1 strategy, otherwise use all strategies
-    const marketPortfolio = selected.length > 1 ? selected : strats;
+    // Per user request to stop strategies from changing position on selection,
+    // we now calculate mitigation scores against the stable "market" of all strategies.
+    // This makes the mitigation score a static property, ensuring a stable sort order in the table.
+    // The portfolio-level metrics will remain dynamic as they are calculated separately on the selection.
+    const marketPortfolio = strats;
 
     // Fallback if there's no meaningful market portfolio
     if (marketPortfolio.length < 2) {
@@ -421,7 +423,7 @@ export class AppComponent {
       throw new Error("Cannot calculate portfolio with no strategies");
     }
   
-    const maxLength = Math.max(...strategies.map(s => s.equity.length));
+    const maxLength = Math.max(...strategies.map(s => (s.equity || []).length));
     const portfolioEquityCurve = new Array(maxLength).fill(0);
     const initialCapital = strategies[0].initialAccount;
   
@@ -430,7 +432,7 @@ export class AppComponent {
     for (let i = 1; i < maxLength; i++) {
       let dailyTotal = 0;
       for (const strat of strategies) {
-        const equity = strat.equity;
+        const equity = strat.equity || [];
         const prevValue = i > 0 && i - 1 < equity.length ? equity[i - 1] : initialCapital;
         const currentValue = i < equity.length ? equity[i] : prevValue;
         dailyTotal += currentValue - prevValue;
@@ -503,8 +505,10 @@ export class AppComponent {
     
     const allTrades = strategies.map(s => {
       const trades = [];
-      for (let i = 1; i < s.equity.length; i++) {
-        trades.push(s.equity[i] - s.equity[i-1]);
+      if (s.equity) {
+          for (let i = 1; i < s.equity.length; i++) {
+            trades.push(s.equity[i] - s.equity[i-1]);
+          }
       }
       return { id: s.id, initial: s.initialAccount, trades };
     });
@@ -750,7 +754,7 @@ export class AppComponent {
         this.walkForwardAnalysis.set(null);
         return;
     }
-    const maxLength = Math.max(...strategies.map(s => s.equity.length));
+    const maxLength = Math.max(...strategies.map(s => (s.equity || []).length));
     if (maxLength === 0) {
       this.walkForwardAnalysis.set(null);
       return;
@@ -760,7 +764,7 @@ export class AppComponent {
     const getSegmentMetrics = (start: number, end: number): PortfolioSegmentMetrics => {
         const segmentStrategies = strategies.map(strat => ({
             ...strat,
-            equity: strat.equity.slice(start, end)
+            equity: (strat.equity || []).slice(start, end)
         }));
         const portfolio = this.calculatePortfolio(segmentStrategies);
         return {
@@ -1247,8 +1251,8 @@ export class AppComponent {
 
   // Math Utilities
   private calculateReturns(equity: number[]): number[] {
+    if (!equity || equity.length < 2) return [];
     const returns: number[] = [];
-    if (equity.length < 2) return [];
     for (let i = 1; i < equity.length; i++) {
         const prev = equity[i - 1] > 0 ? equity[i-1] : 1;
         returns.push((equity[i] / prev) - 1);
@@ -1257,7 +1261,7 @@ export class AppComponent {
   }
 
   private calculateDrawdownSeries(equity: number[]): number[] {
-    if (equity.length < 2) return [];
+    if (!equity || equity.length < 2) return [];
     let peak = equity[0];
     const drawdownSeries: number[] = [0];
 
@@ -1303,7 +1307,7 @@ export class AppComponent {
   }
   
   private calculateAnnualizedReturn(equity: number[], periodsPerYear = 252): number {
-    if (equity.length < 2) return 0;
+    if (!equity || equity.length < 2) return 0;
     const totalReturn = (equity[equity.length - 1] / equity[0]) - 1;
     const years = equity.length / periodsPerYear;
     return Math.pow(1 + totalReturn, 1 / years) - 1;
@@ -1318,7 +1322,7 @@ export class AppComponent {
   }
   
   private calculateMaxDrawdown(equity: number[]): { maxDrawdownPercent: number, maxDrawdownValue: number } {
-    if (equity.length < 2) return { maxDrawdownPercent: 0, maxDrawdownValue: 0 };
+    if (!equity || equity.length < 2) return { maxDrawdownPercent: 0, maxDrawdownValue: 0 };
     let peak = equity[0];
     let maxDrawdown = 0;
     let maxDrawdownValue = 0;
@@ -1337,7 +1341,7 @@ export class AppComponent {
   }
 
   private calculateMaxConsecutiveLosses(equity: number[]): number {
-    if (equity.length < 2) return 0;
+    if (!equity || equity.length < 2) return 0;
     let maxLosingStreak = 0;
     let currentLosingStreak = 0;
     for (let i = 1; i < equity.length; i++) {
