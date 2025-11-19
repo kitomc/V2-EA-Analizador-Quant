@@ -45,6 +45,7 @@ export interface ProcessedStrategy extends RawStrategy {
   monkeyScore: number;
   consistencyScore: number;
   mitigationScore?: number;
+  profitTrades: number[];
 }
 
 export interface Filters {

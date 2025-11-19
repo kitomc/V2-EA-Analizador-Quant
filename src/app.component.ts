@@ -426,6 +426,7 @@ export class AppComponent {
       iqr,
       monkeyScore: 0,
       consistencyScore,
+      profitTrades,
     };
   }
   
@@ -876,53 +877,85 @@ export class AppComponent {
 
     setTimeout(() => {
         try {
-            const candidates = this.filteredStrategies();
+            const MAX_CANDIDATES = 500;
+            const candidates = this.filteredStrategies()
+                .sort((a, b) => b.robustnessScore - a.robustnessScore)
+                .slice(0, MAX_CANDIDATES);
+
             if (candidates.length < 2) {
                 this.isOptimizing.set(false);
                 return;
             }
 
-            // Sort candidates by their individual profit mode to start with a good seed.
-            const sortedCandidates = [...candidates].sort((a, b) => b.profitMode - a.profitMode);
+            const findModeFromFrequency = (counts: Map<number, number>): number => {
+                if (counts.size === 0) return 0;
+                let maxCount = 0;
+                let mode = 0;
+                // Initialize mode with the first key to handle all-equal counts
+                for (const num of counts.keys()) {
+                    mode = num;
+                    break;
+                }
+                for (const [num, count] of counts.entries()) {
+                    if (count > maxCount) {
+                        maxCount = count;
+                        mode = num;
+                    }
+                }
+                return mode;
+            };
 
-            let currentCombination = [sortedCandidates[0]];
+            const seed = candidates.reduce((best, current) => 
+                current.profitMode > best.profitMode ? current : best, candidates[0]
+            );
+
+            let currentCombination: ProcessedStrategy[] = [seed];
+            let remainingCandidates = candidates.filter(c => c.id !== seed.id);
+
             let bestOverallCombination = [...currentCombination];
-            let bestOverallScore = this.calculatePortfolio(bestOverallCombination).profitMode * Math.sqrt(1);
-
-            let remainingCandidates = sortedCandidates.slice(1);
+            
+            const currentFreqMap = new Map<number, number>();
+            for(const trade of seed.profitTrades) {
+                 const rounded = Math.round(trade * 100) / 100;
+                 currentFreqMap.set(rounded, (currentFreqMap.get(rounded) || 0) + 1);
+            }
+            
+            let bestOverallScore = seed.profitMode * Math.sqrt(1);
 
             while (remainingCandidates.length > 0) {
                 let bestCandidateToAdd: ProcessedStrategy | null = null;
-                let bestModeForThisIteration = -Infinity;
-                let candidateIndexToRemove = -1;
+                let bestNextFreqMap: Map<number, number> | null = null;
+                let bestScoreForThisStep = -Infinity;
 
-                // Find the best strategy to add to the current combination
-                for (let i = 0; i < remainingCandidates.length; i++) {
-                    const candidate = remainingCandidates[i];
-                    const testCombination = [...currentCombination, candidate];
-                    const tempPortfolio = this.calculatePortfolio(testCombination);
-                    
-                    if (tempPortfolio.profitMode > bestModeForThisIteration) {
-                        bestModeForThisIteration = tempPortfolio.profitMode;
+                for (const candidate of remainingCandidates) {
+                    const tempFreqMap = new Map(currentFreqMap);
+                    for (const trade of candidate.profitTrades) {
+                        const rounded = Math.round(trade * 100) / 100;
+                        tempFreqMap.set(rounded, (tempFreqMap.get(rounded) || 0) + 1);
+                    }
+
+                    const newMode = findModeFromFrequency(tempFreqMap);
+                    const newScore = newMode * Math.sqrt(currentCombination.length + 1);
+
+                    if (newScore > bestScoreForThisStep) {
+                        bestScoreForThisStep = newScore;
                         bestCandidateToAdd = candidate;
-                        candidateIndexToRemove = i;
+                        bestNextFreqMap = tempFreqMap;
                     }
                 }
-
-                if (bestCandidateToAdd) {
-                    // Add the best found candidate to our growing portfolio
+                
+                if (bestCandidateToAdd && bestNextFreqMap) {
                     currentCombination.push(bestCandidateToAdd);
-                    remainingCandidates.splice(candidateIndexToRemove, 1);
+                    // More efficient map copy
+                    bestNextFreqMap.forEach((value, key) => currentFreqMap.set(key, value));
 
-                    // Check if this new, larger portfolio has a better score
-                    const currentScore = bestModeForThisIteration * Math.sqrt(currentCombination.length);
-                    
-                    if (currentScore > bestOverallScore) {
-                        bestOverallScore = currentScore;
+                    remainingCandidates = remainingCandidates.filter(c => c.id !== bestCandidateToAdd!.id);
+
+                    if (bestScoreForThisStep > bestOverallScore) {
+                        bestOverallScore = bestScoreForThisStep;
                         bestOverallCombination = [...currentCombination];
                     }
                 } else {
-                    // No more candidates to add
                     break;
                 }
             }
