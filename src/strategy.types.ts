@@ -19,10 +19,10 @@ export interface BacktestStats {
   profitFactor: number;
   maxConsecutiveLosses: number;
   rSquared: number;
-  systemQualityNumber: number;
-  sharpeRatio: number;
+  systemQualityNumber?: number;
+  sharpeRatio?: number;
   returnToDrawdown: number;
-  averagePositionLength: number;
+  averagePositionLength?: number;
 }
 
 export interface ProcessedStrategy extends RawStrategy {
@@ -76,7 +76,7 @@ export interface Portfolio {
   rSquared: number;
 }
 
-export type SortKey = keyof BacktestStats | keyof ProcessedStrategy | 'id' | 'mitigationScore' | 'treynorRatio' | 'zScore' | 'iqr';
+export type SortKey = keyof BacktestStats | keyof ProcessedStrategy | 'id' | 'mitigationScore' | 'treynorRatio' | 'zScore' | 'iqr' | 'consistencyScore' | 'monkeyScore';
 export type SortDirection = 'asc' | 'desc';
 
 export interface PortfolioSegmentMetrics {

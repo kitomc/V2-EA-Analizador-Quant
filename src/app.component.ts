@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, signal, computed, ElementRef, viewChild, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
-
+import { GoogleGenAI } from '@google/genai';
 import { RawStrategy, ProcessedStrategy, Filters, Portfolio, SortKey, SortDirection, BacktestStats, WalkForwardResult, PortfolioSegmentMetrics } from './strategy.types';
 
 declare var d3: any;
@@ -58,12 +58,15 @@ export class AppComponent {
 
   // Raw and Processed Data Signals
   rawStrategies = signal<RawStrategy[]>([]);
+  monkeyTestScores = signal<Map<number, number>>(new Map());
+
   baseProcessedStrategies = computed<ProcessedStrategy[]>(() => {
     return this.rawStrategies().map(strat => this.processStrategy(strat));
   });
 
   processedStrategies = computed<ProcessedStrategy[]>(() => {
     const strats = this.baseProcessedStrategies();
+    const scores = this.monkeyTestScores();
     
     if (strats.length === 0) {
       return [];
@@ -77,7 +80,7 @@ export class AppComponent {
 
     // Fallback if there's no meaningful market portfolio
     if (marketPortfolio.length < 2) {
-      return strats.map(s => ({ ...s, treynorRatio: 0, beta: 1, mitigationScore: 50 }));
+      return strats.map(s => ({ ...s, treynorRatio: 0, beta: 1, mitigationScore: 50, monkeyScore: scores.get(s.id) ?? 0 }));
     }
 
     const marketReturnsLists = marketPortfolio.map(s => this.calculateReturns(s.equity));
@@ -86,7 +89,7 @@ export class AppComponent {
 
     // Fallback if market portfolio strategies have no returns history
     if (minMarketReturnLength < 2) {
-        return strats.map(s => ({ ...s, treynorRatio: 0, beta: 1, mitigationScore: 50 }));
+        return strats.map(s => ({ ...s, treynorRatio: 0, beta: 1, mitigationScore: 50, monkeyScore: scores.get(s.id) ?? 0 }));
     }
     
     // Calculate the market's average returns
@@ -111,7 +114,7 @@ export class AppComponent {
       const minLength = Math.min(marketReturns.length, (stratReturnsFull as number[]).length);
       
       if (minLength < 2) {
-          return { ...strat, treynorRatio: 0, beta: 1, mitigationScore: 50 };
+          return { ...strat, treynorRatio: 0, beta: 1, mitigationScore: 50, monkeyScore: scores.get(strat.id) ?? 0 };
       }
 
       // FIX: Cast `stratReturnsFull` to `number[]` because it is inferred as `unknown`.
@@ -123,7 +126,7 @@ export class AppComponent {
       const marketVarianceSliced = this.variance(marketReturnsSliced, marketMeanSliced);
 
       if (marketVarianceSliced === 0) {
-        return { ...strat, treynorRatio: 0, beta: 1, mitigationScore: 50 };
+        return { ...strat, treynorRatio: 0, beta: 1, mitigationScore: 50, monkeyScore: scores.get(strat.id) ?? 0 };
       }
 
       // Calculate Beta and Treynor Ratio
@@ -138,7 +141,7 @@ export class AppComponent {
       const correlation = this.correlation(stratReturns, marketReturnsSliced, stratMean, marketMeanSliced, stratStdev, marketStdev);
       const mitigationScore = (1 - (isNaN(correlation) ? 1 : correlation)) * 50;
       
-      return { ...strat, treynorRatio, beta, mitigationScore };
+      return { ...strat, treynorRatio, beta, mitigationScore, monkeyScore: scores.get(strat.id) ?? 0 };
     });
   });
 
@@ -253,6 +256,8 @@ export class AppComponent {
   uploadStatus = signal<{ message: string; type: 'success' | 'error' } | null>(null);
   isTesting = signal(false);
   isOptimizing = signal(false);
+  isAnalyzing = signal(false);
+  aiAnalysis = signal<string>('');
   popupContent = signal<{ title: string; description: string } | null>(null);
   exportableFiles = signal<{fileName: string, content: string}[] | null>(null);
   detailedStrategy = signal<ProcessedStrategy | null>(null);
@@ -280,6 +285,7 @@ export class AppComponent {
 
     effect(() => {
       const selected = this.selectedStrategies();
+      this.aiAnalysis.set('');
       if (selected.length > 0) {
         const newPortfolio = this.calculatePortfolio(selected);
         this.portfolio.set(newPortfolio);
@@ -340,11 +346,18 @@ export class AppComponent {
         for (const file of Array.from(input.files)) {
             const content = await file.text();
             const data = JSON.parse(content);
-            const strategiesFromFile: RawStrategy[] = Array.isArray(data) ? data : [data];
+            const strategiesFromFile: any[] = Array.isArray(data) ? data : [data];
             
             for (const s of strategiesFromFile) {
+                if (s.id === undefined && s.magicNumber !== undefined) {
+                    s.id = s.magicNumber;
+                }
+                if (s.backtestStats && s.backtestStats.averagePosLength !== undefined) {
+                    s.backtestStats.averagePositionLength = s.backtestStats.averagePosLength;
+                    delete s.backtestStats.averagePosLength;
+                }
                 (s as any).originFile = file.name; 
-                strategiesMap.set(s.magicNumber, s);
+                strategiesMap.set(s.magicNumber, s as RawStrategy);
             }
         }
         
@@ -380,15 +393,23 @@ export class AppComponent {
     const profitMode = this.mode(profitTrades);
     const profitPercentile80 = this.percentile(profitTrades, 80);
     
-    const robustnessScore = this.calculateRobustnessScore(strat.backtestStats, calmarRatio, expectancy);
+    const tempStats: BacktestStats = { ...strat.backtestStats };
+    if (tempStats.systemQualityNumber === undefined || tempStats.systemQualityNumber === null) {
+      const meanTrade = this.mean(trades);
+      const stdevTrade = this.stdev(trades, meanTrade);
+      tempStats.systemQualityNumber = stdevTrade > 0 ? (Math.sqrt(strat.backtestStats.countOfTrades) * expectancy) / stdevTrade : 0;
+    }
+    const robustnessScore = this.calculateRobustnessScore(tempStats, calmarRatio, expectancy);
 
     const meanTrade = this.mean(trades);
     const stdevTrade = this.stdev(trades, meanTrade);
     const zScore = stdevTrade > 0 ? (avgWin - meanTrade) / stdevTrade : 0;
     const iqr = this.percentile(trades, 75) - this.percentile(trades, 25);
+    const consistencyScore = this.calculateConsistencyScore(strat.equity);
 
     return {
       ...strat,
+      backtestStats: tempStats,
       calmarRatio,
       sortinoRatio: 0, 
       expectancy,
@@ -398,11 +419,11 @@ export class AppComponent {
       edgeQuality: strat.backtestStats.profitFactor * expectancy,
       profitMode,
       profitPercentile80,
-      avgTradeDuration: strat.backtestStats.averagePositionLength,
+      avgTradeDuration: strat.backtestStats.averagePositionLength ?? 0,
       zScore,
       iqr,
       monkeyScore: 0,
-      consistencyScore: 0,
+      consistencyScore,
     };
   }
   
@@ -410,7 +431,7 @@ export class AppComponent {
     const pfScore = Math.max(0, Math.min(20, (stats.profitFactor - 1) * 20));
     const rtdScore = Math.max(0, Math.min(20, (stats.returnToDrawdown - 1) * 5));
     const calmarScore = Math.max(0, Math.min(20, (calmar - 0.5) * 10));
-    const sqnScore = Math.max(0, Math.min(15, (stats.systemQualityNumber - 1.5) * 10));
+    const sqnScore = Math.max(0, Math.min(15, ((stats.systemQualityNumber ?? 0) - 1.5) * 10));
     const stabilityScore = Math.max(0, Math.min(15, (stats.rSquared / 100) * 15)); 
     const expectancyScore = expectancy > 0 && stats.profit > 0 && stats.countOfTrades > 0 ? Math.max(0, Math.min(10, (expectancy / (stats.profit / stats.countOfTrades)) * 20)) : 0;
 
@@ -728,6 +749,12 @@ export class AppComponent {
       iqr: { title: 'Rango Intercuartílico (IQR)', description: 'Es la diferencia entre el percentil 75 y el percentil 25 de los resultados de las operaciones. Un IQR más bajo indica una mayor consistencia en los resultados de las operaciones, con menos dispersión entre las ganancias y pérdidas.' },
       rSquared: { title: 'R-Cuadrado (R-Squared)', description: 'Mide la estabilidad y linealidad de la curva de capital. Un valor más alto (cercano a 100) indica que el crecimiento del capital es más consistente y predecible, similar a una línea recta ascendente.' },
       maxConsecutiveLosses: { title: 'Máx Pérdidas Consecutivas', description: 'El número máximo de períodos de trading (días, barras, etc.) consecutivos en los que el capital del portafolio disminuyó. Mide la duración de las rachas de pérdidas.' },
+      monkeyScore: { title: 'Monkey Test Score', description: 'Mide la significancia estadística del rendimiento de una estrategia. Compara el Calmar Ratio original con los resultados de 1000 simulaciones de trades aleatorios. Un score de 95% significa que la estrategia superó al 95% de los resultados aleatorios, indicando que su rendimiento probablemente no se debe a la suerte.' },
+      consistencyScore: { title: 'Score de Consistencia', description: 'Mide la regularidad de las ganancias. Se calcula como el porcentaje de períodos de trading mensuales (22 días) que fueron rentables. Un score alto indica que la estrategia genera ganancias de forma constante a lo largo del tiempo.' },
+      robustnessScore: { title: 'Puntuación de Robustez', description: 'Una puntuación compuesta que evalúa la solidez de una estrategia basándose en múltiples métricas como el Profit Factor, Return to Drawdown, Calmar Ratio, SQN y R-Cuadrado. Una puntuación más alta indica una estrategia más fiable y con menos probabilidades de fallar en condiciones de mercado cambiantes.' },
+      mitigationScore: { title: 'Puntuación de Mitigación', description: 'Mide qué tan bien una estrategia diversifica el portafolio. Se calcula en base a su correlación con las otras estrategias. Una puntuación alta (cercana a 100) indica una baja correlación, lo que significa que la estrategia tiende a comportarse de manera diferente a las demás, reduciendo el riesgo general del portafolio.' },
+      profit: { title: 'Beneficio', description: 'El beneficio neto total generado por la estrategia durante todo el período de backtesting.' },
+      winRate: { title: 'Tasa de Aciertos (Win Rate)', description: 'El porcentaje de operaciones que resultaron en una ganancia. Se calcula como (Número de Operaciones Ganadoras / Número Total de Operaciones).' },
     };
     return definitions[metric] || { title: 'Métrica no encontrada', description: '' };
   }
@@ -792,9 +819,54 @@ export class AppComponent {
 
   runMassiveMonkeyTest() {
     this.isTesting.set(true);
-    setTimeout(() => {
-      this.isTesting.set(false);
-    }, 3000);
+    this.monkeyTestScores.set(new Map());
+    const strategiesToTest = [...this.processedStrategies()];
+
+    const processStrategyChunk = (index: number) => {
+      if (index >= strategiesToTest.length) {
+        this.isTesting.set(false);
+        return;
+      }
+
+      const strat = strategiesToTest[index];
+      const trades: number[] = [];
+      if (strat.equity && strat.equity.length > 1) {
+        for (let i = 1; i < strat.equity.length; i++) {
+          trades.push(strat.equity[i] - strat.equity[i - 1]);
+        }
+      }
+
+      if (trades.length === 0) {
+        setTimeout(() => processStrategyChunk(index + 1), 0);
+        return;
+      }
+
+      const originalCalmar = strat.calmarRatio;
+      const randomCalmars: number[] = [];
+      const simulations = 1000;
+
+      for (let i = 0; i < simulations; i++) {
+        const shuffledTrades = [...trades].sort(() => Math.random() - 0.5);
+        const simEquity = [strat.initialAccount];
+        for (const trade of shuffledTrades) {
+          simEquity.push(simEquity[simEquity.length - 1] + trade);
+        }
+        randomCalmars.push(this.calculateEquityCalmar(simEquity));
+      }
+
+      const wins = randomCalmars.filter(rc => originalCalmar > rc).length;
+      const monkeyScore = (wins / simulations) * 100;
+
+      this.monkeyTestScores.update(map => {
+        const newMap = new Map(map);
+        newMap.set(strat.id, monkeyScore);
+        return newMap;
+      });
+
+      setTimeout(() => processStrategyChunk(index + 1), 0);
+    };
+
+    processStrategyChunk(0);
   }
 
   optimizePortfolioByMode(): void {
@@ -880,6 +952,68 @@ export class AppComponent {
       return newMap;
     });
   }
+
+    async getAiAnalysis() {
+        if (!this.portfolio() || this.selectedStrategies().length === 0) return;
+
+        this.isAnalyzing.set(true);
+        this.aiAnalysis.set('');
+
+        try {
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+            const p = this.portfolio()!;
+            const wf = this.walkForwardAnalysis();
+            const mc = this.monteCarloResult();
+
+            const avgCorrelation = (() => {
+                const matrixData = this.correlationMatrix();
+                if (!matrixData || matrixData.matrix.length === 0) return 0;
+                const correlations = matrixData.matrix
+                    .filter(cell => cell.x !== cell.y)
+                    .map(cell => cell.value);
+                return this.mean(correlations);
+            })();
+
+            const prompt = `
+            You are an expert trading portfolio analyst. Given the following metrics for a portfolio of algorithmic trading strategies, provide a concise analysis in Spanish of its strengths, weaknesses, and potential risks. The portfolio consists of ${p.strategies.length} strategies.
+
+            Key Metrics:
+            - Sharpe Ratio: ${p.sharpeRatio.toFixed(2)}
+            - Calmar Ratio: ${p.calmarRatio.toFixed(2)}
+            - Max Drawdown: ${p.maxDrawdownPercent.toFixed(2)}%
+            - Average Win Rate: ${(p.avgWinRate * 100).toFixed(1)}%
+            - Total Trades: ${p.totalTrades}
+            - Average Correlation: ${avgCorrelation.toFixed(2)}
+            - Walk-Forward Analysis Status: ${wf ? wf.status : 'N/A'}
+            - Monte Carlo P5 Calmar Ratio: ${mc ? mc.p5.calmarRatio.toFixed(2) : 'N/A'}
+
+            Provide the analysis in bullet points, starting with a summary sentence. Use markdown for formatting. Focus on robustness.
+            `;
+
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: prompt,
+            });
+
+            // Basic markdown to HTML conversion
+            let formattedText = response.text
+              .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+              .replace(/\* (.*?)\n/g, '<li>$1</li>')
+              .replace(/(\r\n|\n|\r)/gm, "");
+            
+            if (formattedText.includes('<li>')) {
+              formattedText = `<ul>${formattedText.substring(formattedText.indexOf('<li>'))}</ul>`;
+            }
+
+            this.aiAnalysis.set(formattedText);
+
+        } catch (error) {
+            console.error("Error getting AI analysis:", error);
+            this.aiAnalysis.set('<p class="text-red-400">Error al contactar al servicio de IA. Por favor, inténtelo de nuevo más tarde.</p>');
+        } finally {
+            this.isAnalyzing.set(false);
+        }
+    }
   
   // D3 Charts
   private drawPortfolioChart(data: number[]) {
@@ -1338,6 +1472,31 @@ export class AppComponent {
         }
     }
     return { maxDrawdownPercent: maxDrawdown * 100, maxDrawdownValue };
+  }
+  
+  private calculateEquityCalmar(equity: number[]): number {
+    if (equity.length < 2) return 0;
+    const maxDD = this.calculateMaxDrawdown(equity).maxDrawdownPercent;
+    if (maxDD === 0) return 0;
+    const annualizedReturn = this.calculateAnnualizedReturn(equity);
+    return (annualizedReturn * 100) / maxDD;
+  }
+  
+  private calculateConsistencyScore(equity: number[], period = 22): number {
+    if (!equity || equity.length < period) return 0;
+    
+    let profitablePeriods = 0;
+    let totalPeriods = 0;
+
+    for (let i = period; i < equity.length; i += period) {
+        const startEquity = equity[i - period];
+        const endEquity = equity[i];
+        if (endEquity > startEquity) {
+            profitablePeriods++;
+        }
+        totalPeriods++;
+    }
+    return totalPeriods > 0 ? (profitablePeriods / totalPeriods) * 100 : 0;
   }
 
   private calculateMaxConsecutiveLosses(equity: number[]): number {
