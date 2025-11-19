@@ -156,6 +156,7 @@ export class AppComponent {
     maxIqr: 100,
     minRSquared: 45,
     minTreynorRatio: 0,
+    minConsistencyScore: 50,
   };
   effectiveDefaults: Filters;
   filters = signal<Filters>(this.baseDefaultFilters);
@@ -174,7 +175,8 @@ export class AppComponent {
         s.zScore >= f.minZScore &&
         s.iqr <= f.maxIqr &&
         s.backtestStats.rSquared >= f.minRSquared &&
-        (s.treynorRatio ?? -Infinity) >= f.minTreynorRatio
+        (s.treynorRatio ?? -Infinity) >= f.minTreynorRatio &&
+        s.consistencyScore >= f.minConsistencyScore
       );
   });
   
