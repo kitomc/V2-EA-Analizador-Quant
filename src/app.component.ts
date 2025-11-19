@@ -874,7 +874,6 @@ export class AppComponent {
   optimizePortfolioByMode(): void {
     this.isOptimizing.set(true);
 
-    // Use setTimeout to allow UI to update and not freeze the browser
     setTimeout(() => {
         try {
             const candidates = this.filteredStrategies();
@@ -883,53 +882,52 @@ export class AppComponent {
                 return;
             }
 
-            let bestCombination: ProcessedStrategy[] = [];
-            let maxMode = -Infinity;
+            // Sort candidates by their individual profit mode to start with a good seed.
+            const sortedCandidates = [...candidates].sort((a, b) => b.profitMode - a.profitMode);
 
-            // To speed this up, limit the initial pair search space for larger sets
-            const searchCandidates = candidates.length > 50 ? candidates.slice(0, 50) : candidates;
+            let currentCombination = [sortedCandidates[0]];
+            let bestOverallCombination = [...currentCombination];
+            let bestOverallScore = this.calculatePortfolio(bestOverallCombination).profitMode * Math.sqrt(1);
 
-            for (let i = 0; i < searchCandidates.length; i++) {
-                for (let j = i + 1; j < searchCandidates.length; j++) {
-                    const pair = [searchCandidates[i], searchCandidates[j]];
-                    const tempPortfolio = this.calculatePortfolio(pair);
-                    if (tempPortfolio.profitMode > maxMode) {
-                        maxMode = tempPortfolio.profitMode;
-                        bestCombination = pair;
-                    }
-                }
-            }
-            
-            if (bestCombination.length === 0) {
-                this.isOptimizing.set(false);
-                return;
-            }
-
-            let remainingCandidates = candidates.filter(c => !bestCombination.some(s => s.id === c.id));
+            let remainingCandidates = sortedCandidates.slice(1);
 
             while (remainingCandidates.length > 0) {
                 let bestCandidateToAdd: ProcessedStrategy | null = null;
-                let iterationBestMode = -Infinity;
+                let bestModeForThisIteration = -Infinity;
+                let candidateIndexToRemove = -1;
 
-                for (const candidate of remainingCandidates) {
-                    const testCombination = [...bestCombination, candidate];
+                // Find the best strategy to add to the current combination
+                for (let i = 0; i < remainingCandidates.length; i++) {
+                    const candidate = remainingCandidates[i];
+                    const testCombination = [...currentCombination, candidate];
                     const tempPortfolio = this.calculatePortfolio(testCombination);
-                    if (tempPortfolio.profitMode > iterationBestMode) {
-                        iterationBestMode = tempPortfolio.profitMode;
+                    
+                    if (tempPortfolio.profitMode > bestModeForThisIteration) {
+                        bestModeForThisIteration = tempPortfolio.profitMode;
                         bestCandidateToAdd = candidate;
+                        candidateIndexToRemove = i;
                     }
                 }
 
-                if (iterationBestMode > maxMode && bestCandidateToAdd) {
-                    maxMode = iterationBestMode;
-                    bestCombination.push(bestCandidateToAdd);
-                    remainingCandidates = remainingCandidates.filter(c => c.id !== bestCandidateToAdd!.id);
+                if (bestCandidateToAdd) {
+                    // Add the best found candidate to our growing portfolio
+                    currentCombination.push(bestCandidateToAdd);
+                    remainingCandidates.splice(candidateIndexToRemove, 1);
+
+                    // Check if this new, larger portfolio has a better score
+                    const currentScore = bestModeForThisIteration * Math.sqrt(currentCombination.length);
+                    
+                    if (currentScore > bestOverallScore) {
+                        bestOverallScore = currentScore;
+                        bestOverallCombination = [...currentCombination];
+                    }
                 } else {
+                    // No more candidates to add
                     break;
                 }
             }
             
-            this.selectedStrategiesMap.set(new Map(bestCombination.map(s => [s.id, s])));
+            this.selectedStrategiesMap.set(new Map(bestOverallCombination.map(s => [s.id, s])));
 
         } catch (e) {
             console.error("Error during portfolio optimization:", e);
